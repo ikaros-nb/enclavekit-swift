@@ -143,3 +143,29 @@ struct HighSVector: Decodable {
     let highS: Hex
     let lowS: Hex
 }
+
+struct TransactionVector: Decodable {
+    let relayer: String
+    let relayerFee: UInt64
+    let blockhash: String
+    let programInstruction: ProgramInstructionVector
+    let message: Hex
+    let transaction: String
+}
+
+struct ProgramInstructionVector: Decodable {
+    let programId: String
+    let accounts: [AccountMetaVector]
+    let discriminator: Hex
+    let data: Hex
+}
+
+struct AccountMetaVector: Decodable {
+    let pubkey: String
+    let isSigner: Bool
+    let isWritable: Bool
+
+    var accountMeta: AccountMeta {
+        get throws { AccountMeta(publicKey: try PublicKey(base58: pubkey), isSigner: isSigner, isWritable: isWritable) }
+    }
+}

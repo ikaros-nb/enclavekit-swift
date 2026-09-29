@@ -50,3 +50,90 @@ struct KeyVector: Decodable {
     let wallet: PDAVector
     let vault: PDAVector
 }
+
+struct ActionsVector: Decodable {
+    let nonce: UInt64
+    let expiresAt: Int64
+    let maxRelayerFee: UInt64
+    let actions: [ActionVector]
+}
+
+func actionVectors() throws -> [ActionVector] {
+    try (loadVector("actions") as ActionsVector).actions
+}
+
+struct InstructionVector: Decodable {
+    let programId: String
+    let data: Hex
+}
+
+struct ActionVector: Decodable, CustomTestStringConvertible {
+    let name: String
+    let action: Action
+    let borsh: Hex
+    let preimage: Hex
+    let signature: Hex
+    let secp256r1Instruction: InstructionVector
+
+    var testDescription: String { name }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, fields, borsh, preimage, signature, secp256r1Instruction
+    }
+
+    private enum FieldKeys: String, CodingKey {
+        case to, lamports, newKey, guardians
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        borsh = try c.decode(Hex.self, forKey: .borsh)
+        preimage = try c.decode(Hex.self, forKey: .preimage)
+        signature = try c.decode(Hex.self, forKey: .signature)
+        secp256r1Instruction = try c.decode(InstructionVector.self, forKey: .secp256r1Instruction)
+
+        let f = try c.nestedContainer(keyedBy: FieldKeys.self, forKey: .fields)
+        switch name {
+        case "transfer_sol":
+            action = .transferSol(
+                to: try PublicKey(bytes: f.decode(Hex.self, forKey: .to).bytes),
+                lamports: try f.decode(UInt64.self, forKey: .lamports)
+            )
+        case "propose_rotation":
+            action = .proposeRotation(newKey: try CompressedP256Key(bytes: f.decode(Hex.self, forKey: .newKey).bytes))
+        case "cancel_rotation":
+            action = .cancelRotation
+        case "set_guardians":
+            action = .setGuardians(try f.decode([GuardianVector].self, forKey: .guardians).map(\.guardian))
+        default:
+            // A new action in the vectors fails here until the SDK encodes it.
+            throw DecodingError.dataCorruptedError(forKey: .name, in: c, debugDescription: "unknown action \(name)")
+        }
+    }
+}
+
+/// `"None"`, `{ "P256": "<hex>" }` or `{ "WebAuthn": "<hex>" }`.
+struct GuardianVector: Decodable {
+    let guardian: Guardian
+
+    private enum Keys: String, CodingKey {
+        case p256 = "P256"
+        case webAuthn = "WebAuthn"
+    }
+
+    init(from decoder: Decoder) throws {
+        if let unit = try? decoder.singleValueContainer().decode(String.self), unit == "None" {
+            guardian = .none
+            return
+        }
+        let c = try decoder.container(keyedBy: Keys.self)
+        if let key = try c.decodeIfPresent(Hex.self, forKey: .p256) {
+            guardian = .p256(try CompressedP256Key(bytes: key.bytes))
+        } else if let key = try c.decodeIfPresent(Hex.self, forKey: .webAuthn) {
+            guardian = .webAuthn(try CompressedP256Key(bytes: key.bytes))
+        } else {
+            throw DecodingError.dataCorrupted(.init(codingPath: c.codingPath, debugDescription: "unknown guardian"))
+        }
+    }
+}

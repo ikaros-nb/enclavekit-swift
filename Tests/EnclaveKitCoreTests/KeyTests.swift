@@ -34,4 +34,9 @@ struct KeyTests {
         }
         #expect(throws: KeyError.invalidBase58) { try PublicKey(base58: "0OIl") }
     }
+    
+    @Test func walletIdIsSHA256OfTheCompressedKey() throws {
+        let key = try CompressedP256Key(bytes: vector.compressedPubkey.bytes)
+        #expect(walletId(of: key) == vector.walletId.bytes)
+    }
 }

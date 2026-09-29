@@ -137,3 +137,9 @@ struct GuardianVector: Decodable {
         }
     }
 }
+
+struct HighSVector: Decodable {
+    let message: Hex
+    let highS: Hex
+    let lowS: Hex
+}

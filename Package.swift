@@ -1,0 +1,30 @@
+// swift-tools-version: 6.4
+
+import PackageDescription
+
+let package = Package(
+    name: "EnclaveKit",
+    platforms: [.iOS(.v15), .macOS(.v12)],
+    products: [
+        .library(
+            name: "EnclaveKitCore",
+            targets: ["EnclaveKitCore"]
+        ),
+    ],
+    targets: [
+        .target(
+            name: "EnclaveKitCore",
+            swiftSettings: [
+                .enableUpcomingFeature("ApproachableConcurrency"),
+            ],
+        ),
+        .testTarget(
+            name: "EnclaveKitCoreTests",
+            dependencies: ["EnclaveKitCore"],
+            resources: [.copy("Vectors")],
+            swiftSettings: [
+                .enableUpcomingFeature("ApproachableConcurrency"),
+            ],
+        ),
+    ]
+)

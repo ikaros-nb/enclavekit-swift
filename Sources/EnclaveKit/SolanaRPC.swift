@@ -37,6 +37,15 @@ public struct SolanaRPC: Sendable {
     public func minimumBalanceForRentExemption(space: Int) async throws -> UInt64 {
         try await client.call("getMinimumBalanceForRentExemption", [space])
     }
+    
+    /// `nil` while the cluster has not seen the transaction.
+    public func signatureStatus(_ signature: String) async throws -> SignatureStatus? {
+        let reply: WithContext<[SignatureStatus?]> = try await client.call(
+            "getSignatureStatuses",
+            Positional([signature], ["searchTransactionHistory": true])
+        )
+        return reply.value.first ?? nil
+    }
 
     private struct Config: Encodable {
         var commitment = "confirmed"

@@ -85,6 +85,15 @@ public struct Preimage: Sendable {
     public var maxRelayerFee: UInt64
     public var action: Action
 
+    public init(programId: PublicKey, walletId: [UInt8], nonce: UInt64, expiresAt: Int64, maxRelayerFee: UInt64, action: Action) {
+        self.programId = programId
+        self.walletId = walletId
+        self.nonce = nonce
+        self.expiresAt = expiresAt
+        self.maxRelayerFee = maxRelayerFee
+        self.action = action
+    }
+
     /// `tag ‖ program_id ‖ wallet_id ‖ nonce ‖ expires_at ‖ max_relayer_fee ‖ borsh(action)`,
     /// integers little-endian, 104 bytes before the action.
     public var bytes: [UInt8] {

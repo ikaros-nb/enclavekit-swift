@@ -10,6 +10,17 @@ import Foundation
 /// A smart wallet seen from the device: the key that authorises it, the
 /// relayer that pays for it, the RPC that reads it.
 public struct Wallet: Sendable {
+    public enum Status: Equatable, Sendable {
+        /// No action yet. The address already receives; the first send
+        /// creates the account, its rent part of that send's fee.
+        case notOnChainYet
+        /// `attested`: an App Attest receipt vouches that the key lives in
+        /// a genuine Secure Enclave.
+        case active(attested: Bool)
+        /// The wallet rotated to another key: this device can no longer sign.
+        case keyReplaced
+    }
+
     public enum SendError: Error, Equatable {
         /// The state names another key: the wallet rotated away from this one.
         case notActiveKey
@@ -31,33 +42,47 @@ public struct Wallet: Sendable {
     public let signer: any Signer
     /// SHA-256 of the key that made the wallet: the seed of both addresses.
     public let walletId: [UInt8]
-    public let programId: PublicKey
+    public let cluster: Cluster
     private let rpc: SolanaRPC
     private let kora: Kora
 
-    public init(signer: any Signer, kora: Kora, rpc: SolanaRPC = SolanaRPC(), programId: PublicKey = EnclaveKitProgram.id) {
+    public init(signer: any Signer, kora: Kora, rpc: SolanaRPC = SolanaRPC(), cluster: Cluster = .devnet) {
         self.signer = signer
         self.walletId = EnclaveKit.walletId(of: signer.publicKey)
-        self.programId = programId
+        self.cluster = cluster
         self.rpc = rpc
         self.kora = kora
     }
 
-    /// Where to send SOL to this wallet. Receives before the first action.
-    public var vaultAddress: PublicKey {
+    var programId: PublicKey { cluster.programId }
+
+    /// Where to send SOL to this wallet: the vault. Receives before the
+    /// first action.
+    public var address: PublicKey {
         EnclaveKitProgram.vaultAddress(walletId: walletId, programId: programId)
     }
 
-    public func balance() async throws -> UInt64 {
-        try await rpc.balance(vaultAddress)
+    /// The vault's page: balance, every transaction in and out.
+    public var explorerURL: URL {
+        cluster.explorerURL("address/\(address)")
+    }
+
+    public func balance() async throws -> Lamports {
+        Lamports(try await rpc.balance(address))
+    }
+
+    public func status() async throws -> Status {
+        guard let state = try await state() else { return .notOnChainYet }
+        guard state.activeKey == signer.publicKey else { return .keyReplaced }
+        return .active(attested: state.attested)
     }
 
     /// `nil` until the first action creates the state. An account the
     /// program does not own is no state either: anyone can send lamports to
     /// the address before it exists.
     public func state() async throws -> SmartWallet? {
-        let address = EnclaveKitProgram.walletAddress(walletId: walletId, programId: programId)
-        guard let account = try await rpc.accountInfo(address), account.owner == programId else { return nil }
+        let stateAddress = EnclaveKitProgram.walletAddress(walletId: walletId, programId: programId)
+        guard let account = try await rpc.accountInfo(stateAddress), account.owner == programId else { return nil }
         return try SmartWallet(data: account.data)
     }
 

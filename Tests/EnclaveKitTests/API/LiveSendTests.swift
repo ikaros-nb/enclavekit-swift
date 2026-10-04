@@ -27,7 +27,7 @@ struct LiveSendTests {
     /// First run: the state is created, its rent refunded to Kora. Later
     /// runs: nonce + 1 each time.
     @Test func transferSolLands() async throws {
-        let vault = wallet.vaultAddress
+        let vault = wallet.address
         try #require(
             try await wallet.balance() >= 5_000_000,
             "fund the vault: solana transfer \(vault) 0.05 --allow-unfunded-recipient -u devnet"

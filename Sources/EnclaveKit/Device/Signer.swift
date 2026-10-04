@@ -25,18 +25,16 @@ public struct SecureEnclaveKey: Signer {
     public let publicKey: CompressedP256Key
     private let dataRepresentation: Data
 
-    /// The key saved under `account`, or a new one saved there. Every
-    /// signature asks for Face ID, Touch ID or the passcode.
-    public static func loadOrCreate(account: String = "wallet") throws -> SecureEnclaveKey {
-        try loadOrCreate(account: account, flags: [.privateKeyUsage, .userPresence])
+    /// The key saved under `account`, `nil` if there is none.
+    static func load(account: String) throws -> SecureEnclaveKey? {
+        try Keychain.read(account).map(SecureEnclaveKey.init(dataRepresentation:))
     }
 
-    /// Tests leave out `.userPresence`: nobody looks at the Mac.
-    static func loadOrCreate(account: String, flags: SecAccessControlCreateFlags) throws -> SecureEnclaveKey {
-        // Never replaced: the wallet is this key.
-        if let data = try Keychain.read(account) {
-            return try SecureEnclaveKey(dataRepresentation: data)
-        }
+    /// A new key, saved under `account`. Every signature asks for Face ID,
+    /// Touch ID or the passcode; tests leave out `.userPresence`, nobody
+    /// looks at the Mac. Never replaces a key: an `account` already taken
+    /// fails with `errSecDuplicateItem`.
+    static func create(account: String, flags: SecAccessControlCreateFlags = [.privateKeyUsage, .userPresence]) throws -> SecureEnclaveKey {
         var error: Unmanaged<CFError>?
         guard let accessControl = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, flags, &error) else {
             throw error!.takeRetainedValue() as Error

@@ -7,6 +7,7 @@
 
 import CryptoKit
 import Foundation
+import Security
 import Testing
 @testable import EnclaveKit
 
@@ -20,22 +21,28 @@ final class SecureEnclaveKeyTests {
         try? Keychain.delete(account)
     }
 
-    func key() throws -> SecureEnclaveKey {
-        try SecureEnclaveKey.loadOrCreate(account: account, flags: .privateKeyUsage)
+    func create() throws -> SecureEnclaveKey {
+        try SecureEnclaveKey.create(account: account, flags: .privateKeyUsage)
     }
 
     @Test func signaturesVerify() async throws {
         let message = Array("enclavekit:v1 preimage".utf8)
-        let key = try key()
+        let key = try create()
         let signature = try await key.sign(message)
 
         let publicKey = try P256.Signing.PublicKey(compressedRepresentation: key.publicKey.bytes)
         #expect(publicKey.isValidSignature(try P256.Signing.ECDSASignature(rawRepresentation: signature), for: message))
     }
 
-    @Test func secondLoadFindsTheSameKey() throws {
-        let first = try key()
-        let second = try key()
-        #expect(second.publicKey == first.publicKey)
+    @Test func loadFindsTheCreatedKey() throws {
+        #expect(try SecureEnclaveKey.load(account: account) == nil)
+        let created = try create()
+        #expect(try SecureEnclaveKey.load(account: account)?.publicKey == created.publicKey)
+    }
+
+    @Test func createNeverReplaces() throws {
+        let first = try create()
+        #expect(throws: Keychain.Failure(status: errSecDuplicateItem)) { try create() }
+        #expect(try SecureEnclaveKey.load(account: account)?.publicKey == first.publicKey)
     }
 }

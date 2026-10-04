@@ -10,7 +10,7 @@ import Foundation
 
 /// The key that authorises the wallet's actions: the Secure Enclave on a
 /// device, a software key in tests.
-public protocol Signer: Sendable {
+protocol Signer: Sendable {
     var publicKey: CompressedP256Key { get }
 
     /// ECDSA P-256 over SHA-256(`message`), as r ‖ s. S may be high: the
@@ -21,8 +21,8 @@ public protocol Signer: Sendable {
 /// A P-256 key made by the Secure Enclave, which never lets it out. The app
 /// keeps `dataRepresentation` in the Keychain: a blob only this enclave can
 /// open, useless on any other device.
-public struct SecureEnclaveKey: Signer {
-    public let publicKey: CompressedP256Key
+struct SecureEnclaveKey: Signer {
+    let publicKey: CompressedP256Key
     private let dataRepresentation: Data
 
     /// The key saved under `account`, `nil` if there is none.
@@ -53,7 +53,7 @@ public struct SecureEnclaveKey: Signer {
 
     /// Blocks its thread until the user authenticates: `@concurrent` keeps it
     /// off the caller's actor, the main one for an app.
-    @concurrent public func sign(_ message: [UInt8]) async throws -> [UInt8] {
+    @concurrent func sign(_ message: [UInt8]) async throws -> [UInt8] {
         let key = try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: dataRepresentation)
         return Array(try key.signature(for: message).rawRepresentation)
     }

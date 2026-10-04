@@ -7,8 +7,8 @@
 
 /// The instruction placed before every EnclaveKit instruction. The runtime checks the signature;
 /// the program then reads this instruction back through the Instructions sysvar.
-public enum Secp256r1Program {
-    public static let id = try! PublicKey(base58: "Secp256r1SigVerify1111111111111111111111111")
+enum Secp256r1Program {
+    static let id = try! PublicKey(base58: "Secp256r1SigVerify1111111111111111111111111")
 
     private static let publicKeyOffset: UInt16 = 16   // 2 + 14
     private static let signatureOffset: UInt16 = 49   // 16 + 33
@@ -19,7 +19,7 @@ public enum Secp256r1Program {
     /// Layout of `new_secp256r1_instruction_with_signature`, which the program
     /// checks strictly. The signature is normalised to low-S here, so callers
     /// can pass the Secure Enclave output as is.
-    public static func instruction(publicKey: CompressedP256Key, signature: [UInt8], message: [UInt8]) -> Instruction {
+    static func instruction(publicKey: CompressedP256Key, signature: [UInt8], message: [UInt8]) -> Instruction {
         var data: [UInt8] = [1, 0] // one signature, padding
         data.appendLittleEndian(signatureOffset)
         data.appendLittleEndian(currentInstruction)

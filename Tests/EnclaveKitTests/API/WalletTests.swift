@@ -5,9 +5,9 @@
 //  Created by Nicolas Bouème on 30/09/2026.
 //
 
-import EnclaveKit
 import Foundation
 import Testing
+@testable import EnclaveKit
 
 struct WalletTests {
     let kora = Kora(url: URL(string: "http://kora.invalid")!)

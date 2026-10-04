@@ -5,14 +5,14 @@
 //  Created by Nicolas Bouème on 29/09/2026.
 //
 
-public struct SignatureStatus: Equatable, Sendable, Decodable {
-    public enum Commitment: String, Sendable, Decodable {
+struct SignatureStatus: Equatable, Sendable, Decodable {
+    enum Commitment: String, Sendable, Decodable {
         case processed, confirmed, finalized
     }
 
-    public let confirmationStatus: Commitment?
+    let confirmationStatus: Commitment?
     /// Set when the transaction landed but failed: fee paid, no effect.
-    public let error: TransactionError?
+    let error: TransactionError?
 
     private enum CodingKeys: String, CodingKey {
         case confirmationStatus
@@ -21,7 +21,7 @@ public struct SignatureStatus: Equatable, Sendable, Decodable {
 }
 
 /// Why a landed transaction failed: the `err` field of the RPC.
-public enum TransactionError: Error, Equatable, Sendable {
+enum TransactionError: Error, Equatable, Sendable {
     /// Instruction `instruction` returned a program error. For EnclaveKit,
     /// Anchor numbers its errors from 6000.
     case custom(instruction: UInt8, code: UInt32)
@@ -31,8 +31,19 @@ public enum TransactionError: Error, Equatable, Sendable {
     case transaction(String)
 }
 
+extension TransactionError: CustomStringConvertible {
+    /// The `reason` of `EnclaveKitError.failed`.
+    var description: String {
+        switch self {
+        case let .custom(instruction, code): "instruction \(instruction) failed with error \(code)"
+        case let .instruction(instruction, error): "instruction \(instruction) failed: \(error)"
+        case let .transaction(error): error
+        }
+    }
+}
+
 extension TransactionError: Decodable {
-    public init(from decoder: Decoder) throws {
+    init(from decoder: Decoder) throws {
         let error = try RustEnum(from: decoder)
         guard error.variant == "InstructionError", let payload = error.payload else {
             self = .transaction(error.variant)

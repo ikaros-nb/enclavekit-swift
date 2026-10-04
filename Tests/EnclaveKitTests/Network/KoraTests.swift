@@ -5,9 +5,9 @@
 //  Created by Nicolas Bouème on 29/09/2026.
 //
 
-import EnclaveKit
 import Foundation
 import Testing
+@testable import EnclaveKit
 
 struct KoraTests {
     let url = URL(string: "http://127.0.0.1:8080")!

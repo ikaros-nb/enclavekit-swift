@@ -5,9 +5,9 @@
 //  Created by Nicolas Bouème on 30/09/2026.
 //
 
-import EnclaveKit
 import Foundation
 import Testing
+@testable import EnclaveKit
 
 /// A real `transfer_sol` through Kora: it spends devnet lamports and shows in
 /// the explorer. Off unless `LIVE_SEND` is set as well as `KORA_URL`:

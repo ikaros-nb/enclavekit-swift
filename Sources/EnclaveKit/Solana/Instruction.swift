@@ -5,10 +5,10 @@
 //  Created by Nicolas Bouème on 29/09/2026.
 //
 
-public struct AccountMeta: Hashable, Sendable {
-    public var publicKey: PublicKey
-    public var isSigner: Bool
-    public var isWritable: Bool
+struct AccountMeta: Hashable, Sendable {
+    var publicKey: PublicKey
+    var isSigner: Bool
+    var isWritable: Bool
 }
 
 extension AccountMeta {
@@ -17,8 +17,8 @@ extension AccountMeta {
     static func readonly(_ key: PublicKey) -> Self { .init(publicKey: key, isSigner: false, isWritable: false) }
 }
 
-public struct Instruction: Hashable, Sendable {
-    public var programId: PublicKey
-    public var accounts: [AccountMeta]
-    public var data: [UInt8]
+struct Instruction: Hashable, Sendable {
+    var programId: PublicKey
+    var accounts: [AccountMeta]
+    var data: [UInt8]
 }

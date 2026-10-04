@@ -8,18 +8,18 @@
 import Foundation
 
 /// The Solana RPC methods the SDK reads with, all at `confirmed`.
-public struct SolanaRPC: Sendable {
-    public static let devnet = URL(string: "https://api.devnet.solana.com")!
+struct SolanaRPC: Sendable {
+    static let devnet = URL(string: "https://api.devnet.solana.com")!
 
     private let client: JSONRPCClient
 
-    public init(url: URL = devnet, transport: @escaping HTTPTransport = { try await URLSession.shared.data(for: $0) }) {
+    init(url: URL = devnet, transport: @escaping HTTPTransport = { try await URLSession.shared.data(for: $0) }) {
         client = JSONRPCClient(url: url, transport: transport)
     }
 
     /// `nil` when the account does not exist, like the wallet state before
     /// its first action.
-    public func accountInfo(_ address: PublicKey) async throws -> AccountInfo? {
+    func accountInfo(_ address: PublicKey) async throws -> AccountInfo? {
         let reply: WithContext<AccountInfo?> = try await client.call(
             "getAccountInfo",
             Positional(address.base58, Config(encoding: "base64"))
@@ -27,18 +27,18 @@ public struct SolanaRPC: Sendable {
         return reply.value
     }
 
-    public func balance(_ address: PublicKey) async throws -> UInt64 {
+    func balance(_ address: PublicKey) async throws -> UInt64 {
         let reply: WithContext<UInt64> = try await client.call("getBalance", Positional(address.base58, Config()))
         return reply.value
     }
 
     /// What the relayer advances for the wallet state on its first action.
-    public func minimumBalanceForRentExemption(space: Int) async throws -> UInt64 {
+    func minimumBalanceForRentExemption(space: Int) async throws -> UInt64 {
         try await client.call("getMinimumBalanceForRentExemption", [space])
     }
     
     /// `nil` while the cluster has not seen the transaction.
-    public func signatureStatus(_ signature: String) async throws -> SignatureStatus? {
+    func signatureStatus(_ signature: String) async throws -> SignatureStatus? {
         let reply: WithContext<[SignatureStatus?]> = try await client.call(
             "getSignatureStatuses",
             Positional([signature], ["searchTransactionHistory": true])
@@ -57,10 +57,10 @@ public struct SolanaRPC: Sendable {
     }
 }
 
-public struct AccountInfo: Equatable, Sendable {
-    public let lamports: UInt64
-    public let owner: PublicKey
-    public let data: [UInt8]
+struct AccountInfo: Equatable, Sendable {
+    let lamports: UInt64
+    let owner: PublicKey
+    let data: [UInt8]
 }
 
 extension AccountInfo: Decodable {
@@ -68,7 +68,7 @@ extension AccountInfo: Decodable {
         case lamports, owner, data
     }
 
-    public init(from decoder: Decoder) throws {
+    init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         lamports = try container.decode(UInt64.self, forKey: .lamports)
         owner = try PublicKey(base58: container.decode(String.self, forKey: .owner))

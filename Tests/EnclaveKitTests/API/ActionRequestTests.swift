@@ -11,7 +11,7 @@ import Testing
 
 struct ActionRequestTests {
     static let recipient = try! PublicKey(bytes: [UInt8](repeating: 0x77, count: 32))
-    let kora = Kora(url: URL(string: "http://kora.invalid")!)
+    static let sent = Receipt(signature: "5VERv8NM", explorerURL: URL(string: "https://explorer.solana.com/tx/5VERv8NM?cluster=devnet")!)
 
     @Test func firstTransferPaysTheStateRent() async throws {
         let request = try await wallet(balance: 20_000_000).prepareTransfer(10_000_000, to: Self.recipient)
@@ -28,13 +28,13 @@ struct ActionRequestTests {
     @Test func vaultKeepsItsRent() async throws {
         let wallet = wallet(balance: 20_000_000)
         _ = try await wallet.prepareTransfer(17_526_200, to: Self.recipient)
-        await #expect(throws: Wallet.SendError.insufficientFunds(available: 17_526_200)) {
+        await #expect(throws: EnclaveKitError.insufficientFunds(available: 17_526_200)) {
             try await wallet.prepareTransfer(17_526_201, to: Self.recipient)
         }
     }
 
     @Test func emptyVaultHasNothingAvailable() async {
-        await #expect(throws: Wallet.SendError.insufficientFunds(available: 0)) {
+        await #expect(throws: EnclaveKitError.insufficientFunds(available: 0)) {
             try await wallet(balance: 0).prepareTransfer(1, to: Self.recipient)
         }
     }
@@ -42,7 +42,7 @@ struct ActionRequestTests {
     @Test func replacedKeyCannotPrepare() async throws {
         let other = try CompressedP256Key(bytes: [0x02] + [UInt8](repeating: 0xaa, count: 32))
         let wallet = wallet(state: accountJSON(data: stateData(activeKey: other)), balance: 20_000_000)
-        await #expect(throws: Wallet.SendError.notActiveKey) {
+        await #expect(throws: EnclaveKitError.keyReplaced) {
             try await wallet.prepareTransfer(10_000_000, to: Self.recipient)
         }
     }
@@ -50,29 +50,27 @@ struct ActionRequestTests {
     /// Approved on the first action, authorized once the state exists: the
     /// enclave signs the approved ceiling, the relayer gets back only the fee.
     @Test func authorizeSignsTheApprovedCeiling() async throws {
-        let kora = Kora(url: URL(string: "http://kora.invalid")!, transport: stub { method, params in
-            switch method {
-            case "getPayerSigner":
-                #"{"signer_address":"93MB2qRDNVLxbmmPuYpLdAqn3u2x9ZhaVZK5wELHueP8","payment_address":"93MB2qRDNVLxbmmPuYpLdAqn3u2x9ZhaVZK5wELHueP8"}"#
-            case "getBlockhash":
-                #"{"blockhash":"AByCTxLPRZPoyK22KdMxa3xkCbcNbeNWzVeEvh6UcJs9"}"#
-            case "signAndSendTransaction":
-                Self.checkTransferSol(params, nonce: 1, maxRelayerFee: 1_823_560, relayerFee: 10_000)
-            default:
-                nil
-            }
-        })
+        let kora = Self.relayer { params in
+            Self.checkTransferSol(params, nonce: 1, maxRelayerFee: 1_823_560, relayerFee: 10_000)
+        }
         let wallet = wallet(state: accountJSON(data: stateData()), kora: kora)
         let request = ActionRequest(maxFee: 1_823_560, action: .transferSol(to: Self.recipient, lamports: 1_000_000), wallet: wallet)
+        #expect(try await request.authorize() == Self.sent)
+    }
 
-        let receipt = try await request.authorize()
-        #expect(receipt.signature == "5VERv8NM")
-        #expect(receipt.explorerURL.absoluteString == "https://explorer.solana.com/tx/5VERv8NM?cluster=devnet")
+    /// The fee is paid, the receipt still leads to the explorer.
+    @Test func failureOnChainKeepsTheReceipt() async throws {
+        let wallet = wallet(state: accountJSON(data: stateData()), err: #"{"InstructionError":[1,{"Custom":6003}]}"#)
+        let request = ActionRequest(maxFee: 10_000, action: .transferSol(to: Self.recipient, lamports: 1_000_000), wallet: wallet)
+        await #expect(throws: EnclaveKitError.failed(Self.sent, reason: "instruction 1 failed with error 6003")) {
+            try await request.authorize()
+        }
     }
 
     /// `SoftwareKey.test`'s wallet on a devnet that answers with `state` at
-    /// the state's address and `balance` in the vault.
-    func wallet(state: String = "null", balance: UInt64 = 0, kora: Kora? = nil) -> Wallet {
+    /// the state's address, `balance` in the vault, and `err` for any sent
+    /// transaction.
+    func wallet(state: String = "null", balance: UInt64 = 0, err: String = "null", kora: Kora? = nil) -> Wallet {
         let rpc = SolanaRPC(transport: stub { method, params in
             switch method {
             case "getAccountInfo":
@@ -86,21 +84,42 @@ struct ActionRequestTests {
                 default: nil
                 }
             case "getSignatureStatuses":
-                #"{"context":{"slot":1},"value":[{"confirmationStatus":"confirmed","err":null}]}"#
+                #"{"context":{"slot":1},"value":[{"confirmationStatus":"confirmed","err":\#(err)}]}"#
             default:
                 nil
             }
         })
-        return Wallet(signer: SoftwareKey.test, kora: kora ?? self.kora, rpc: rpc)
+        return Wallet(signer: SoftwareKey.test, kora: kora ?? Self.relayer(), rpc: rpc)
     }
 
-    /// Finds the `transfer_sol` arguments in the transaction Kora receives,
-    /// checks them, and answers like Kora.
-    static func checkTransferSol(_ params: Any?, nonce: UInt64, maxRelayerFee: UInt64, relayerFee: UInt64) -> String? {
+    /// Kora as the tests see it: `check` gets what `signAndSendTransaction`
+    /// receives, the answer is always `sent`.
+    static func relayer(check: @escaping @Sendable (_ params: Any?) -> Void = { _ in }) -> Kora {
+        Kora(url: URL(string: "http://kora.invalid")!, transport: stub { method, params in
+            switch method {
+            case "getPayerSigner":
+                return #"{"signer_address":"93MB2qRDNVLxbmmPuYpLdAqn3u2x9ZhaVZK5wELHueP8","payment_address":"93MB2qRDNVLxbmmPuYpLdAqn3u2x9ZhaVZK5wELHueP8"}"#
+            case "getBlockhash":
+                return #"{"blockhash":"AByCTxLPRZPoyK22KdMxa3xkCbcNbeNWzVeEvh6UcJs9"}"#
+            case "signAndSendTransaction":
+                check(params)
+                return #"{"signature":"5VERv8NM","signed_transaction":"AQ==","signer_pubkey":"93MB2qRDNVLxbmmPuYpLdAqn3u2x9ZhaVZK5wELHueP8"}"#
+            default:
+                return nil
+            }
+        })
+    }
+
+    /// Finds the `transfer_sol` arguments in the transaction Kora receives
+    /// and checks them.
+    static func checkTransferSol(_ params: Any?, nonce: UInt64, maxRelayerFee: UInt64, relayerFee: UInt64) {
         guard let base64 = (params as? [String: String])?["transaction"],
               let transaction = Data(base64Encoded: base64).map(Array.init),
               let start = transaction.firstRange(of: EnclaveKitProgram.discriminator(of: "transfer_sol"))?.upperBound
-        else { return nil }
+        else {
+            Issue.record("no transfer_sol in what Kora received")
+            return
+        }
         // wallet_id 32, nonce, expires_at, max_relayer_fee, lamports, relayer_fee
         let field = { (offset: Int) in
             transaction[start + offset..<start + offset + 8].reversed().reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
@@ -108,6 +127,5 @@ struct ActionRequestTests {
         #expect(field(32) == nonce)
         #expect(field(48) == maxRelayerFee)
         #expect(field(64) == relayerFee)
-        return #"{"signature":"5VERv8NM","signed_transaction":"AQ==","signer_pubkey":"93MB2qRDNVLxbmmPuYpLdAqn3u2x9ZhaVZK5wELHueP8"}"#
     }
 }

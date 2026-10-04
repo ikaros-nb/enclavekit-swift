@@ -5,9 +5,9 @@
 //  Created by Nicolas Bouème on 30/09/2026.
 //
 
-import EnclaveKit
 import Foundation
 import Testing
+@testable import EnclaveKit
 
 /// Read-only calls against a running Kora and devnet: they check the
 /// stubs' JSON against the real servers. Off unless `KORA_URL` is set:

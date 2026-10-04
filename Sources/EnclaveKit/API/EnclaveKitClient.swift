@@ -37,10 +37,11 @@ public struct EnclaveKitClient: Sendable {
         try SecureEnclaveKey.load(account: account).map(wallet(of:))
     }
 
-    /// Makes the device key in the Secure Enclave. Throws if there is one
-    /// already: the wallet is that key, it is never replaced.
+    /// Makes the device key in the Secure Enclave. Throws `walletExists` if
+    /// there is one already: the wallet is that key, it is never replaced.
     public func createWallet() throws -> Wallet {
-        wallet(of: try SecureEnclaveKey.create(account: account))
+        guard try SecureEnclaveKey.load(account: account) == nil else { throw EnclaveKitError.walletExists }
+        return wallet(of: try SecureEnclaveKey.create(account: account))
     }
 
     private func wallet(of key: SecureEnclaveKey) -> Wallet {

@@ -6,21 +6,21 @@
 //
 
 /// A recent blockhash: 32 bytes shown in base58, like an address.
-public struct Blockhash: Hashable, Sendable {
-    public let bytes: [UInt8]
+struct Blockhash: Hashable, Sendable {
+    let bytes: [UInt8]
 
-    public init(base58: String) throws(KeyError) {
+    init(base58: String) throws(KeyError) {
         bytes = try PublicKey(base58: base58).bytes
     }
 }
 
 /// Legacy transaction message, compiled like `Message::new_with_blockhash`
 /// so the bytes match the Rust side exactly.
-public struct Message: Sendable {
-    public struct Header: Hashable, Sendable {
-        public var numRequiredSignatures: UInt8
-        public var numReadonlySignedAccounts: UInt8
-        public var numReadonlyUnsignedAccounts: UInt8
+struct Message: Sendable {
+    struct Header: Hashable, Sendable {
+        var numRequiredSignatures: UInt8
+        var numReadonlySignedAccounts: UInt8
+        var numReadonlyUnsignedAccounts: UInt8
     }
 
     struct CompiledInstruction: Hashable, Sendable {
@@ -35,12 +35,12 @@ public struct Message: Sendable {
         case payer, writableSigner, readonlySigner, writable, readonly
     }
 
-    public let header: Header
-    public let accountKeys: [PublicKey]
-    public let recentBlockhash: Blockhash
+    let header: Header
+    let accountKeys: [PublicKey]
+    let recentBlockhash: Blockhash
     let instructions: [CompiledInstruction]
 
-    public init(instructions: [Instruction], payer: PublicKey, recentBlockhash: Blockhash) {
+    init(instructions: [Instruction], payer: PublicKey, recentBlockhash: Blockhash) {
         // Every key once, with its flags merged over all instructions.
         var flags: [PublicKey: (isSigner: Bool, isWritable: Bool)] = [:]
         func add(_ key: PublicKey, isSigner: Bool, isWritable: Bool) {
@@ -90,7 +90,7 @@ public struct Message: Sendable {
     }
 
     /// What the fee payer signs.
-    public var bytes: [UInt8] {
+    var bytes: [UInt8] {
         var out = [header.numRequiredSignatures, header.numReadonlySignedAccounts, header.numReadonlyUnsignedAccounts]
         out.appendCompactU16(accountKeys.count)
         for key in accountKeys {
@@ -108,7 +108,7 @@ public struct Message: Sendable {
 
     /// The transaction handed to Kora: one empty signature slot per required
     /// signer, then the message. Kora fills the fee payer's slot.
-    public var unsignedTransaction: [UInt8] {
+    var unsignedTransaction: [UInt8] {
         let signatures = Int(header.numRequiredSignatures)
         var out: [UInt8] = []
         out.appendCompactU16(signatures)

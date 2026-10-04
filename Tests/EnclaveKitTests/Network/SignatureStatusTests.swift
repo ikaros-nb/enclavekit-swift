@@ -5,8 +5,8 @@
 //  Created by Nicolas Bouème on 29/09/2026.
 //
 
-import EnclaveKit
 import Testing
+@testable import EnclaveKit
 
 struct SignatureStatusTests {
     static let request = """

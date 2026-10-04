@@ -31,4 +31,10 @@ final class EnclaveKitClientTests {
         let created = try client.createWallet()
         #expect(try client.wallet()?.address == created.address)
     }
+
+    @Test func createWalletNeverReplaces() throws {
+        let created = try client.createWallet()
+        #expect(throws: EnclaveKitError.walletExists) { try client.createWallet() }
+        #expect(try client.wallet()?.address == created.address)
+    }
 }

@@ -7,7 +7,7 @@
 
 import Foundation
 
-/// A transaction the cluster confirmed.
+/// A transaction sent through Kora: its signature and its explorer page.
 public struct Receipt: Hashable, Sendable {
     public let signature: String
     public let explorerURL: URL

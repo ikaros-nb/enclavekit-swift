@@ -8,9 +8,9 @@
 import Foundation
 
 /// Sends one HTTP request: `URLSession` in the app, a stub in tests.
-public typealias HTTPTransport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+typealias HTTPTransport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
-public enum JSONRPCError: Error, Equatable {
+enum JSONRPCError: Error, Equatable {
     /// Status other than 200. Kora answers 401 to a missing or wrong API key,
     /// public RPC nodes 429 when rate limited.
     case httpStatus(Int)

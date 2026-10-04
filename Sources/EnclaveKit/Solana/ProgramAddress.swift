@@ -9,7 +9,7 @@ import CryptoKit
 
 extension PublicKey {
     /// Same search as `Pubkey::find_program_address`: bumps 255 down to 1.
-    public static func findProgramAddress(seeds: [[UInt8]], programId: PublicKey) -> (address: PublicKey, bump: UInt8)? {
+    static func findProgramAddress(seeds: [[UInt8]], programId: PublicKey) -> (address: PublicKey, bump: UInt8)? {
         for bump in stride(from: UInt8.max, through: 1, by: -1) {
             if let address = createProgramAddress(seeds: seeds + [[bump]], programId: programId) {
                 return (address, bump)

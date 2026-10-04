@@ -7,14 +7,14 @@
 
 import CryptoKit
 
-public enum Seeds {
-    public static let wallet = Array("wallet".utf8)
-    public static let vault = Array("vault".utf8)
+enum Seeds {
+    static let wallet = Array("wallet".utf8)
+    static let vault = Array("vault".utf8)
 }
 
-public let maxGuardians = 3
+let maxGuardians = 3
 
-public enum Guardian: Hashable, Sendable {
+enum Guardian: Hashable, Sendable {
     case none
     case p256(CompressedP256Key)
     case webAuthn(CompressedP256Key)
@@ -29,7 +29,7 @@ public enum Guardian: Hashable, Sendable {
 }
 
 /// Mirror of `enclavekit_encoding::Action`: same variant order, same field order.
-public enum Action: Hashable, Sendable {
+enum Action: Hashable, Sendable {
     case transferSol(to: PublicKey, lamports: UInt64)
     case transferToken(mint: PublicKey, to: PublicKey, amount: UInt64)
     case proposeRotation(newKey: CompressedP256Key)
@@ -40,7 +40,7 @@ public enum Action: Hashable, Sendable {
 
     /// Variant index as one byte, then the fields in declaration order.
     /// Fixed-size arrays have no length prefix.
-    public var borsh: [UInt8] {
+    var borsh: [UInt8] {
         var out: [UInt8] = []
         switch self {
         case let .transferSol(to, lamports):
@@ -75,17 +75,17 @@ public enum Action: Hashable, Sendable {
 }
 
 /// The bytes the Secure Enclave signs. Layout of `preimage.rs`.
-public struct Preimage: Sendable {
-    public static let domainTag: [UInt8] = Array("enclavekit:v1".utf8) + [0, 0, 0]
+struct Preimage: Sendable {
+    static let domainTag: [UInt8] = Array("enclavekit:v1".utf8) + [0, 0, 0]
 
-    public var programId: PublicKey
-    public var walletId: [UInt8]
-    public var nonce: UInt64
-    public var expiresAt: Int64
-    public var maxRelayerFee: UInt64
-    public var action: Action
+    var programId: PublicKey
+    var walletId: [UInt8]
+    var nonce: UInt64
+    var expiresAt: Int64
+    var maxRelayerFee: UInt64
+    var action: Action
 
-    public init(programId: PublicKey, walletId: [UInt8], nonce: UInt64, expiresAt: Int64, maxRelayerFee: UInt64, action: Action) {
+    init(programId: PublicKey, walletId: [UInt8], nonce: UInt64, expiresAt: Int64, maxRelayerFee: UInt64, action: Action) {
         self.programId = programId
         self.walletId = walletId
         self.nonce = nonce
@@ -96,7 +96,7 @@ public struct Preimage: Sendable {
 
     /// `tag ‖ program_id ‖ wallet_id ‖ nonce ‖ expires_at ‖ max_relayer_fee ‖ borsh(action)`,
     /// integers little-endian, 104 bytes before the action.
-    public var bytes: [UInt8] {
+    var bytes: [UInt8] {
         var out = Self.domainTag
         out += programId.bytes
         out += walletId
@@ -109,6 +109,6 @@ public struct Preimage: Sendable {
 }
 
 /// SHA-256 of the compressed key: the seed of both PDAs.
-public func walletId(of key: CompressedP256Key) -> [UInt8] {
+func walletId(of key: CompressedP256Key) -> [UInt8] {
     Array(SHA256.hash(data: key.bytes))
 }

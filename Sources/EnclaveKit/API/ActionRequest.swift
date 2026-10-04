@@ -28,8 +28,7 @@ public struct ActionRequest: Identifiable, Sendable {
     /// another authorization is in flight, then reads the nonce it left.
     public func authorize() async throws -> Receipt {
         try await Self.queue.run {
-            let signature = try await wallet.execute(action, maxRelayerFee: maxFee.value)
-            return Receipt(signature: signature, explorerURL: wallet.cluster.explorerURL("tx/\(signature)"))
+            try await wallet.execute(action, maxRelayerFee: maxFee.value)
         }
     }
 }

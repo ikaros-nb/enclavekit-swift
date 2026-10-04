@@ -5,8 +5,8 @@
 //  Created by Nicolas Bouème on 05/10/2026.
 //
 
-import EnclaveKit
 import Foundation
+@testable import EnclaveKit
 
 /// An account as `getAccountInfo` returns it, owned by the program unless
 /// told otherwise.

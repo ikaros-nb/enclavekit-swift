@@ -5,9 +5,9 @@
 //  Created by Nicolas Bouème on 29/09/2026.
 //
 
-import EnclaveKit
 import Foundation
 import Testing
+@testable import EnclaveKit
 
 /// A server that checks the one request it receives, then sends `reply`.
 func stub(expecting body: String, headers: [String: String] = [:], reply: String, status: Int = 200) -> HTTPTransport {

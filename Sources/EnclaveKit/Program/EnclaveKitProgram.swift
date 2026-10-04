@@ -8,22 +8,22 @@
 import CryptoKit
 
 /// Instructions of the EnclaveKit program, encoded the way Anchor decodes them.
-public enum EnclaveKitProgram {
+enum EnclaveKitProgram {
     /// Devnet deployment.
-    public static let id = try! PublicKey(base58: "dG4h3aizVEW1bKjzkGsfk6zqcfa2MVn2DjavPniesSY")
+    static let id = try! PublicKey(base58: "dG4h3aizVEW1bKjzkGsfk6zqcfa2MVn2DjavPniesSY")
 
-    public enum InstructionError: Error, Equatable {
+    enum InstructionError: Error, Equatable {
         /// The program has no handler for this action yet.
         case unsupported(Action)
     }
 
     /// State account of the wallet.
-    public static func walletAddress(walletId: [UInt8], programId: PublicKey = id) -> PublicKey {
+    static func walletAddress(walletId: [UInt8], programId: PublicKey = id) -> PublicKey {
         address(seed: Seeds.wallet, walletId: walletId, programId: programId)
     }
 
     /// System account holding the wallet's lamports.
-    public static func vaultAddress(walletId: [UInt8], programId: PublicKey = id) -> PublicKey {
+    static func vaultAddress(walletId: [UInt8], programId: PublicKey = id) -> PublicKey {
         address(seed: Seeds.vault, walletId: walletId, programId: programId)
     }
 
@@ -31,7 +31,7 @@ public enum EnclaveKitProgram {
     /// secp256r1 instruction that carries the signature of `preimage.bytes`.
     /// Its arguments repeat the signed header, from which the program rebuilds
     /// the preimage.
-    public static func instruction(
+    static func instruction(
         executing preimage: Preimage,
         relayer: PublicKey,
         relayerFee: UInt64

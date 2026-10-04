@@ -21,18 +21,6 @@ public struct Wallet: Sendable {
         case keyReplaced
     }
 
-    public enum SendError: Error, Equatable {
-        /// The state names another key: the wallet rotated away from this one.
-        case notActiveKey
-        /// The vault cannot pay the amount, the fee and keep its own rent:
-        /// `available` is the most it can send.
-        case insufficientFunds(available: Lamports)
-        /// Landed and failed: the relayer paid the fee, nothing else happened.
-        case failed(signature: String, TransactionError)
-        /// Still unknown after its blockhash expired: it can no longer land.
-        case notConfirmed(signature: String)
-    }
-
     /// 5 000 lamports per signature: the relayer's Ed25519 one and the
     /// secp256r1 one the precompile checks.
     static let transactionFee: UInt64 = 10_000
@@ -42,14 +30,14 @@ public struct Wallet: Sendable {
     /// transaction can no longer land.
     static let confirmationTimeout: Duration = .seconds(90)
 
-    public let signer: any Signer
+    let signer: any Signer
     /// SHA-256 of the key that made the wallet: the seed of both addresses.
-    public let walletId: [UInt8]
-    public let cluster: Cluster
+    let walletId: [UInt8]
+    let cluster: Cluster
     private let rpc: SolanaRPC
     private let kora: Kora
 
-    public init(signer: any Signer, kora: Kora, rpc: SolanaRPC = SolanaRPC(), cluster: Cluster = .devnet) {
+    init(signer: any Signer, kora: Kora, rpc: SolanaRPC = SolanaRPC(), cluster: Cluster = .devnet) {
         self.signer = signer
         self.walletId = EnclaveKit.walletId(of: signer.publicKey)
         self.cluster = cluster
@@ -83,7 +71,7 @@ public struct Wallet: Sendable {
     /// `nil` until the first action creates the state. An account the
     /// program does not own is no state either: anyone can send lamports to
     /// the address before it exists.
-    public func state() async throws -> SmartWallet? {
+    func state() async throws -> SmartWallet? {
         let stateAddress = EnclaveKitProgram.walletAddress(walletId: walletId, programId: programId)
         guard let account = try await rpc.accountInfo(stateAddress), account.owner == programId else { return nil }
         return try SmartWallet(data: account.data)
@@ -100,12 +88,12 @@ public struct Wallet: Sendable {
     /// may empty it.
     func prepare(_ action: Action, spending amount: Lamports = 0) async throws -> ActionRequest {
         let state = try await state()
-        if let state, state.activeKey != signer.publicKey { throw SendError.notActiveKey }
+        if let state, state.activeKey != signer.publicKey { throw EnclaveKitError.keyReplaced }
         let maxFee = try await relayerFee(state)
         let reserved = maxFee + (try await rpc.minimumBalanceForRentExemption(space: 0))
         let balance = try await rpc.balance(address)
         guard balance >= reserved, amount.value <= balance - reserved else {
-            throw SendError.insufficientFunds(available: Lamports(balance > reserved ? balance - reserved : 0))
+            throw EnclaveKitError.insufficientFunds(available: Lamports(balance > reserved ? balance - reserved : 0))
         }
         return ActionRequest(maxFee: Lamports(maxFee), action: action, wallet: self)
     }
@@ -113,9 +101,9 @@ public struct Wallet: Sendable {
     /// Signs `action` with the enclave, has Kora send it, returns once
     /// confirmed. One Face ID. `maxRelayerFee` is the ceiling the user
     /// approved; the nonce and the expiry are read now, right before.
-    func execute(_ action: Action, maxRelayerFee: UInt64) async throws -> String {
+    func execute(_ action: Action, maxRelayerFee: UInt64) async throws -> Receipt {
         let state = try await state()
-        if let state, state.activeKey != signer.publicKey { throw SendError.notActiveKey }
+        if let state, state.activeKey != signer.publicKey { throw EnclaveKitError.keyReplaced }
         // Lower than approved if another send created the state meanwhile.
         let relayerFee = min(try await relayerFee(state), maxRelayerFee)
         let relayer = try await kora.payerSigner()
@@ -141,9 +129,13 @@ public struct Wallet: Sendable {
             payer: relayer,
             recentBlockhash: blockhash
         )
-        let transaction = try await kora.signAndSend(message)
-        try await confirm(transaction)
-        return transaction
+        let receipt = receipt(try await kora.signAndSend(message))
+        try await confirm(receipt)
+        return receipt
+    }
+
+    private func receipt(_ signature: String) -> Receipt {
+        Receipt(signature: signature, explorerURL: cluster.explorerURL("tx/\(signature)"))
     }
 
     /// What the relayer advances and the vault pays back: the fee, and on
@@ -153,15 +145,15 @@ public struct Wallet: Sendable {
         return rent + Self.transactionFee
     }
 
-    private func confirm(_ signature: String) async throws {
+    private func confirm(_ receipt: Receipt) async throws {
         let deadline = ContinuousClock.now + Self.confirmationTimeout
         while ContinuousClock.now < deadline {
-            if let status = try await rpc.signatureStatus(signature) {
-                if let error = status.error { throw SendError.failed(signature: signature, error) }
+            if let status = try await rpc.signatureStatus(receipt.signature) {
+                if let error = status.error { throw EnclaveKitError.failed(receipt, reason: "\(error)") }
                 if status.confirmationStatus == .confirmed || status.confirmationStatus == .finalized { return }
             }
             try await Task.sleep(for: .seconds(1))
         }
-        throw SendError.notConfirmed(signature: signature)
+        throw EnclaveKitError.notConfirmed(receipt)
     }
 }

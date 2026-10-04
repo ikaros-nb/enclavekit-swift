@@ -5,8 +5,8 @@
 //  Created by Nicolas Bouème on 29/09/2026.
 //
 
-import EnclaveKit
 import Testing
+@testable import EnclaveKit
 
 struct SolanaRPCTests {
     let address = try! PublicKey(base58: "hYEjxsHxt6UeiMra3eqTxzuWKTWMbC7Q4qjZLV5NpZK")

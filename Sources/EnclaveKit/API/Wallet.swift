@@ -24,6 +24,9 @@ public struct Wallet: Sendable {
     public enum SendError: Error, Equatable {
         /// The state names another key: the wallet rotated away from this one.
         case notActiveKey
+        /// The vault cannot pay the amount, the fee and keep its own rent:
+        /// `available` is the most it can send.
+        case insufficientFunds(available: Lamports)
         /// Landed and failed: the relayer paid the fee, nothing else happened.
         case failed(signature: String, TransactionError)
         /// Still unknown after its blockhash expired: it can no longer land.
@@ -86,23 +89,42 @@ public struct Wallet: Sendable {
         return try SmartWallet(data: account.data)
     }
 
-    /// Signs `action` with the enclave, has Kora send it, returns once
-    /// confirmed. One Face ID.
-    public func send(_ action: Action) async throws -> String {
-        // What the preimage binds: the on-chain nonce and the relayer's
-        // ceiling. The relayer advances the fee, and on the first action the
-        // rent of the state; the vault pays both back.
+    /// A transfer for the user to approve. Reads the state and the balance,
+    /// and refuses here, before any Face ID, what the vault cannot pay.
+    public func prepareTransfer(_ amount: Lamports, to recipient: PublicKey) async throws -> ActionRequest {
+        try await prepare(.transferSol(to: recipient, lamports: amount.value), spending: amount)
+    }
+
+    /// The vault pays `amount`, the relayer's refund, and keeps its own rent:
+    /// below it the runtime rejects the transaction, and only `sweep_vault`
+    /// may empty it.
+    func prepare(_ action: Action, spending amount: Lamports = 0) async throws -> ActionRequest {
         let state = try await state()
         if let state, state.activeKey != signer.publicKey { throw SendError.notActiveKey }
-        let rent = state == nil ? try await rpc.minimumBalanceForRentExemption(space: SmartWallet.space) : 0
-        let relayerFee = rent + Self.transactionFee
+        let maxFee = try await relayerFee(state)
+        let reserved = maxFee + (try await rpc.minimumBalanceForRentExemption(space: 0))
+        let balance = try await rpc.balance(address)
+        guard balance >= reserved, amount.value <= balance - reserved else {
+            throw SendError.insufficientFunds(available: Lamports(balance > reserved ? balance - reserved : 0))
+        }
+        return ActionRequest(maxFee: Lamports(maxFee), action: action, wallet: self)
+    }
+
+    /// Signs `action` with the enclave, has Kora send it, returns once
+    /// confirmed. One Face ID. `maxRelayerFee` is the ceiling the user
+    /// approved; the nonce and the expiry are read now, right before.
+    func execute(_ action: Action, maxRelayerFee: UInt64) async throws -> String {
+        let state = try await state()
+        if let state, state.activeKey != signer.publicKey { throw SendError.notActiveKey }
+        // Lower than approved if another send created the state meanwhile.
+        let relayerFee = min(try await relayerFee(state), maxRelayerFee)
         let relayer = try await kora.payerSigner()
         let preimage = Preimage(
             programId: programId,
             walletId: walletId,
             nonce: state?.nonce ?? 0,
             expiresAt: Int64(Date.now.timeIntervalSince1970) + Self.authorizationTTL,
-            maxRelayerFee: relayerFee,
+            maxRelayerFee: maxRelayerFee,
             action: action
         )
         // Before Face ID: an action without handler throws here.
@@ -122,6 +144,13 @@ public struct Wallet: Sendable {
         let transaction = try await kora.signAndSend(message)
         try await confirm(transaction)
         return transaction
+    }
+
+    /// What the relayer advances and the vault pays back: the fee, and on
+    /// the first action the rent of the state.
+    private func relayerFee(_ state: SmartWallet?) async throws -> UInt64 {
+        let rent = state == nil ? try await rpc.minimumBalanceForRentExemption(space: SmartWallet.space) : 0
+        return rent + Self.transactionFee
     }
 
     private func confirm(_ signature: String) async throws {

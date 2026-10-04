@@ -36,8 +36,9 @@ struct LiveSendTests {
         // A new account every run. 0.001 SOL is above the rent-exempt minimum.
         let to = try PublicKey(bytes: (0..<32).map { _ in .random(in: 0...255) })
 
-        let signature = try await wallet.send(.transferSol(to: to, lamports: 1_000_000))
-        print("https://explorer.solana.com/tx/\(signature)?cluster=devnet")
+        let request = try await wallet.prepareTransfer(1_000_000, to: to)
+        let receipt = try await request.authorize()
+        print(receipt.explorerURL)
 
         #expect(try await rpc.balance(to) == 1_000_000)
         #expect(try await wallet.state()?.nonce == nonce + 1)

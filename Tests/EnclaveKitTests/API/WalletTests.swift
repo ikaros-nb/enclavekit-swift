@@ -25,19 +25,19 @@ struct WalletTests {
     /// Lamports sent to the state's address before the first action leave a
     /// System account there. Still no state: the first action must go through.
     @Test func accountOwnedByAnotherProgramIsNoState() async throws {
-        let wallet = wallet(stateAccount: account(owner: "11111111111111111111111111111111", data: []))
+        let wallet = wallet(stateAccount: accountJSON(owner: "11111111111111111111111111111111", data: []))
         #expect(try await wallet.state() == nil)
         #expect(try await wallet.status() == .notOnChainYet)
     }
 
     @Test func stateOfThisKeyIsActive() async throws {
-        let wallet = wallet(stateAccount: account(data: state(activeKey: SoftwareKey.test.publicKey, attested: true)))
+        let wallet = wallet(stateAccount: accountJSON(data: stateData(attested: true)))
         #expect(try await wallet.status() == .active(attested: true))
     }
 
     @Test func stateOfAnotherKeyIsReplaced() async throws {
         let other = try CompressedP256Key(bytes: [0x02] + [UInt8](repeating: 0xaa, count: 32))
-        let wallet = wallet(stateAccount: account(data: state(activeKey: other, attested: false)))
+        let wallet = wallet(stateAccount: accountJSON(data: stateData(activeKey: other)))
         #expect(try await wallet.status() == .keyReplaced)
     }
 
@@ -52,23 +52,5 @@ struct WalletTests {
             reply: #"{"jsonrpc":"2.0","id":1,"result":{"context":{"slot":1},"value":\#(value)}}"#
         ))
         return Wallet(signer: SoftwareKey.test, kora: kora, rpc: rpc)
-    }
-
-    /// An account as `getAccountInfo` returns it, owned by the program unless
-    /// told otherwise.
-    func account(owner: String = "dG4h3aizVEW1bKjzkGsfk6zqcfa2MVn2DjavPniesSY", data: [UInt8]) -> String {
-        """
-        {"data":["\(Data(data).base64EncodedString())","base64"],"executable":false,"lamports":1813560,
-         "owner":"\(owner)","rentEpoch":18446744073709551615,"space":\(data.count)}
-        """
-    }
-
-    /// The devnet account of `SmartWalletTests`, moved to this wallet's
-    /// `walletId`, with `activeKey` and `attested` as given.
-    func state(activeKey: CompressedP256Key, attested: Bool) -> [UInt8] {
-        var data = SmartWalletTests.devnetAccount
-        data.replaceSubrange(8..<73, with: walletId(of: SoftwareKey.test.publicKey) + activeKey.bytes)
-        data[81] = attested ? 1 : 0
-        return data
     }
 }

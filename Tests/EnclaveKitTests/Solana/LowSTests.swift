@@ -7,7 +7,7 @@
 
 import CryptoKit
 import Testing
-@testable import EnclaveKitCore
+@testable import EnclaveKit
 
 struct LowSTests {
     let key: KeyVector

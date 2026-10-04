@@ -7,7 +7,7 @@
 
 import Foundation
 import Testing
-@testable import EnclaveKitCore
+@testable import EnclaveKit
 
 /// Reads `Vectors/<name>.json`, copied from enclavekit-anchor by scripts/sync-vectors.sh.
 func loadVector<T: Decodable>(_ name: String) throws -> T {

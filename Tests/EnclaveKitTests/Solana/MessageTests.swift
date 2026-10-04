@@ -7,7 +7,7 @@
 
 import Foundation
 import Testing
-@testable import EnclaveKitCore
+@testable import EnclaveKit
 
 struct MessageTests {
     /// Cases of `short_vec` in the Solana SDK.

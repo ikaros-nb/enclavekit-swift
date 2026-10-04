@@ -7,7 +7,6 @@
 
 import CryptoKit
 import EnclaveKit
-import EnclaveKitCore
 
 /// A P-256 key in memory, for tests. A device key never leaves its enclave.
 struct SoftwareKey: Signer {

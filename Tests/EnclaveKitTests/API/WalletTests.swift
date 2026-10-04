@@ -6,7 +6,6 @@
 //
 
 import EnclaveKit
-import EnclaveKitCore
 import Foundation
 import Testing
 

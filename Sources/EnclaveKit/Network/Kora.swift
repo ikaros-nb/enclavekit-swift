@@ -5,7 +5,6 @@
 //  Created by Nicolas Bouème on 29/09/2026.
 //
 
-import EnclaveKitCore
 import Foundation
 
 /// The Kora relayer: it pays the transaction fee as fee payer, and the vault

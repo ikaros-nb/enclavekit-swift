@@ -6,7 +6,6 @@
 //
 
 import CryptoKit
-import EnclaveKitCore
 import Foundation
 import Testing
 @testable import EnclaveKit

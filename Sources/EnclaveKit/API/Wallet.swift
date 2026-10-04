@@ -5,7 +5,6 @@
 //  Created by Nicolas Bouème on 30/09/2026.
 //
 
-import EnclaveKitCore
 import Foundation
 
 /// A smart wallet seen from the device: the key that authorises it, the
@@ -38,7 +37,7 @@ public struct Wallet: Sendable {
 
     public init(signer: any Signer, kora: Kora, rpc: SolanaRPC = SolanaRPC(), programId: PublicKey = EnclaveKitProgram.id) {
         self.signer = signer
-        self.walletId = EnclaveKitCore.walletId(of: signer.publicKey)
+        self.walletId = EnclaveKit.walletId(of: signer.publicKey)
         self.programId = programId
         self.rpc = rpc
         self.kora = kora

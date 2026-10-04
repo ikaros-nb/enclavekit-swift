@@ -6,7 +6,6 @@
 //
 
 import CryptoKit
-import EnclaveKitCore
 import Foundation
 
 /// The key that authorises the wallet's actions: the Secure Enclave on a

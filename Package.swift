@@ -12,29 +12,15 @@ let package = Package(
             name: "EnclaveKit",
             targets: ["EnclaveKit"]
         ),
-        .library(
-            name: "EnclaveKitCore",
-            targets: ["EnclaveKitCore"]
-        ),
     ],
     targets: [
         .target(
             name: "EnclaveKit",
-            dependencies: ["EnclaveKitCore"],
-            swiftSettings: [enableUpcomingFeature],
-        ),
-        .target(
-            name: "EnclaveKitCore",
             swiftSettings: [enableUpcomingFeature],
         ),
         .testTarget(
             name: "EnclaveKitTests",
             dependencies: ["EnclaveKit"],
-            swiftSettings: [enableUpcomingFeature],
-        ),
-        .testTarget(
-            name: "EnclaveKitCoreTests",
-            dependencies: ["EnclaveKitCore"],
             resources: [.copy("Vectors")],
             swiftSettings: [enableUpcomingFeature],
         ),

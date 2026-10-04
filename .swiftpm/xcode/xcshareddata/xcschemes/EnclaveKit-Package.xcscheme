@@ -20,19 +20,6 @@
                ReferencedContainer = "container:">
             </BuildableReference>
          </BuildActionEntry>
-         <BuildActionEntry
-            buildForTesting = "YES"
-            buildForRunning = "YES"
-            buildForProfiling = "YES"
-            buildForArchiving = "YES"
-            buildForAnalyzing = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "EnclaveKitCore"
-               BuildableName = "EnclaveKitCore"
-               ReferencedContainer = "container:">
-            </BuildableReference>
-         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -48,15 +35,6 @@
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "EnclaveKitTests"
                BuildableName = "EnclaveKitTests"
-               ReferencedContainer = "container:">
-            </BuildableReference>
-         </TestableReference>
-         <TestableReference
-            skipped = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "EnclaveKitCoreTests"
-               BuildableName = "EnclaveKitCoreTests"
                ReferencedContainer = "container:">
             </BuildableReference>
          </TestableReference>

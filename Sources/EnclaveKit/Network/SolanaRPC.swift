@@ -5,7 +5,6 @@
 //  Created by Nicolas Bouème on 29/09/2026.
 //
 
-import EnclaveKitCore
 import Foundation
 
 /// The Solana RPC methods the SDK reads with, all at `confirmed`.

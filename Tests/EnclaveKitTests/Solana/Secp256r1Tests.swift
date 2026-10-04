@@ -6,7 +6,7 @@
 //
 
 import Testing
-@testable import EnclaveKitCore
+@testable import EnclaveKit
 
 struct Secp256r1Tests {
     let key: KeyVector

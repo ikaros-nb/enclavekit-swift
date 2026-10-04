@@ -7,7 +7,7 @@
 
 import Foundation
 import Testing
-@testable import EnclaveKitCore
+@testable import EnclaveKit
 
 struct SmartWalletTests {
     /// Devnet account zJnfu9j39T4tB2VYGLrDNbdujq89YtvkgJk1FwJ135u, created by

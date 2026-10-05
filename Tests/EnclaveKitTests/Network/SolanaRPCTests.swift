@@ -70,13 +70,14 @@ struct SolanaRPCTests {
         }
     }
 
+    /// A 429 is tried again first: see `JSONRPCTests`.
     @Test func httpErrorThrows() async {
         let rpc = SolanaRPC(transport: stub(
             expecting: #"{"jsonrpc":"2.0","id":1,"method":"getMinimumBalanceForRentExemption","params":[229]}"#,
-            reply: "Too many requests",
-            status: 429
+            reply: "Service Unavailable",
+            status: 503
         ))
-        await #expect(throws: JSONRPCError.httpStatus(429)) {
+        await #expect(throws: JSONRPCError.httpStatus(503)) {
             try await rpc.minimumBalanceForRentExemption(space: 229)
         }
     }

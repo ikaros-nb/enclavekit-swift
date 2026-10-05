@@ -36,6 +36,10 @@ struct JSONRPCClient: Sendable {
     let url: URL
     var headers: [String: String] = [:]
     let transport: HTTPTransport
+    /// Waits before each new try of a rate-limited call. Devnet's public
+    /// RPC counts per IP over 10 seconds, and the relayer next to the app
+    /// often shares that IP.
+    var retryDelays: [Duration] = [.seconds(1), .seconds(2), .seconds(4), .seconds(8)]
 
     func call<Result: Decodable>(_ method: String, _ params: some Encodable) async throws -> Result {
         var request = URLRequest(url: url)
@@ -46,7 +50,13 @@ struct JSONRPCClient: Sendable {
         }
         request.httpBody = try JSONEncoder().encode(Request(method: method, params: params))
 
-        let (data, response) = try await transport(request)
+        // A 429 is answered before any work: trying again is safe, even for
+        // a transaction.
+        var (data, response) = try await transport(request)
+        for delay in retryDelays where (response as? HTTPURLResponse)?.statusCode == 429 {
+            try await Task.sleep(for: delay)
+            (data, response) = try await transport(request)
+        }
         if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 {
             throw JSONRPCError.httpStatus(status)
         }

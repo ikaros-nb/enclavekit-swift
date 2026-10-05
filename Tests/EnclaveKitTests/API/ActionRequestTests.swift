@@ -67,6 +67,16 @@ struct ActionRequestTests {
         }
     }
 
+    /// Kora simulates before sending: what fails there never leaves it.
+    @Test func relayerRejectionSendsNothing() async throws {
+        let reason = "Invalid transaction: Transaction simulation failed: Error processing Instruction 1: custom program error: 0x1773"
+        let wallet = wallet(state: accountJSON(data: stateData()), kora: Self.relayer(errors: ["signAndSendTransaction": reason]))
+        let request = ActionRequest(maxFee: 10_000, action: .transferSol(to: Self.recipient, lamports: 1_000_000), wallet: wallet)
+        await #expect(throws: EnclaveKitError.rejected(reason: reason)) {
+            try await request.authorize()
+        }
+    }
+
     /// `SoftwareKey.test`'s wallet on a devnet that answers with `state` at
     /// the state's address, `balance` in the vault, and `err` for any sent
     /// transaction.
@@ -93,9 +103,9 @@ struct ActionRequestTests {
     }
 
     /// Kora as the tests see it: `check` gets what `signAndSendTransaction`
-    /// receives, the answer is always `sent`.
-    static func relayer(check: @escaping @Sendable (_ params: Any?) -> Void = { _ in }) -> Kora {
-        Kora(url: URL(string: "http://kora.invalid")!, transport: stub { method, params in
+    /// receives, the answer is always `sent`, unless `errors` says otherwise.
+    static func relayer(errors: [String: String] = [:], check: @escaping @Sendable (_ params: Any?) -> Void = { _ in }) -> Kora {
+        Kora(url: URL(string: "http://kora.invalid")!, transport: stub(errors: errors) { method, params in
             switch method {
             case "getPayerSigner":
                 return #"{"signer_address":"93MB2qRDNVLxbmmPuYpLdAqn3u2x9ZhaVZK5wELHueP8","payment_address":"93MB2qRDNVLxbmmPuYpLdAqn3u2x9ZhaVZK5wELHueP8"}"#

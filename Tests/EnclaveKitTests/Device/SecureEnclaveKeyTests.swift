@@ -7,6 +7,7 @@
 
 import CryptoKit
 import Foundation
+import LocalAuthentication
 import Security
 import Testing
 @testable import EnclaveKit
@@ -44,5 +45,23 @@ final class SecureEnclaveKeyTests {
         let first = try create()
         #expect(throws: Keychain.Failure(status: errSecDuplicateItem)) { try create() }
         #expect(try SecureEnclaveKey.load(account: account)?.publicKey == first.publicKey)
+    }
+}
+
+/// What CryptoKit throws when Face ID does not end in a signature. On the
+/// Mac, an `LAContext` invalidated during the prompt gives the `LAError`
+/// as is, `appCancel`.
+struct AuthenticationTests {
+    @Test(arguments: [LAError.Code.userCancel, .appCancel, .systemCancel])
+    func dismissedPromptIsCancelled(_ code: LAError.Code) {
+        #expect(throws: EnclaveKitError.cancelled) {
+            try SecureEnclaveKey.authenticating { throw LAError(code) }
+        }
+    }
+
+    @Test func faceNotRecognisedStaysAnLAError() {
+        #expect(throws: LAError(.authenticationFailed)) {
+            try SecureEnclaveKey.authenticating { throw LAError(.authenticationFailed) }
+        }
     }
 }

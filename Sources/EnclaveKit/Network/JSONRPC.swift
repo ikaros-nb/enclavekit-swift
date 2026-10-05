@@ -20,6 +20,17 @@ enum JSONRPCError: Error, Equatable {
     case missingResult
 }
 
+/// Internal, but what the app shows through `localizedDescription`.
+extension JSONRPCError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case let .httpStatus(status): "The server answered with HTTP status \(status)."
+        case let .server(_, message): message
+        case .missingResult: "The server's reply had no result."
+        }
+    }
+}
+
 /// JSON-RPC 2.0 over HTTP POST, what both Solana RPC and Kora speak.
 struct JSONRPCClient: Sendable {
     let url: URL

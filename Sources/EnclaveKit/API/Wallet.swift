@@ -129,7 +129,13 @@ public struct Wallet: Sendable {
             payer: relayer,
             recentBlockhash: blockhash
         )
-        let receipt = receipt(try await kora.signAndSend(message))
+        let receipt: Receipt
+        do {
+            receipt = self.receipt(try await kora.signAndSend(message))
+        } catch let JSONRPCError.server(_, reason) {
+            // Kora simulates first: what fails there is never sent.
+            throw EnclaveKitError.rejected(reason: reason)
+        }
         try await confirm(receipt)
         return receipt
     }

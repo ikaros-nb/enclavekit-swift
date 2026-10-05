@@ -27,12 +27,16 @@ func stub(expecting body: String, headers: [String: String] = [:], reply: String
 
 /// A server for flows that make several calls: `reply` gets each method and
 /// its params and returns the `result`, or `nil` for a call it does not expect.
-func stub(_ reply: @escaping @Sendable (_ method: String, _ params: Any?) -> String?) -> HTTPTransport {
+/// The methods in `errors` answer a JSON-RPC error with that message instead.
+func stub(errors: [String: String] = [:], _ reply: @escaping @Sendable (_ method: String, _ params: Any?) -> String?) -> HTTPTransport {
     { request in
         let body = try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
         let method = try #require(body?["method"] as? String)
-        let result = try #require(reply(method, body?["params"]), "unexpected call to \(method)")
         let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        if let message = errors[method] {
+            return (Data(#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"\#(message)"}}"#.utf8), response)
+        }
+        let result = try #require(reply(method, body?["params"]), "unexpected call to \(method)")
         return (Data(#"{"jsonrpc":"2.0","id":1,"result":\#(result)}"#.utf8), response)
     }
 }

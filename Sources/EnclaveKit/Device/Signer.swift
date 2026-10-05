@@ -7,6 +7,7 @@
 
 import CryptoKit
 import Foundation
+import LocalAuthentication
 
 /// The key that authorises the wallet's actions: the Secure Enclave on a
 /// device, a software key in tests.
@@ -25,6 +26,17 @@ struct SecureEnclaveKey: Signer {
     let publicKey: CompressedP256Key
     private let dataRepresentation: Data
 
+    /// `SecureEnclave.isAvailable` is true on the iOS Simulator, but there
+    /// LocalAuthentication refuses `.userPresence`: "This call is not
+    /// supported on iOS Simulator".
+    static var isSupported: Bool {
+        #if targetEnvironment(simulator)
+        return false
+        #else
+        return SecureEnclave.isAvailable
+        #endif
+    }
+
     /// The key saved under `account`, `nil` if there is none.
     static func load(account: String) throws -> SecureEnclaveKey? {
         try Keychain.read(account).map(SecureEnclaveKey.init(dataRepresentation:))
@@ -35,6 +47,7 @@ struct SecureEnclaveKey: Signer {
     /// looks at the Mac. Never replaces a key: an `account` already taken
     /// fails with `errSecDuplicateItem`.
     static func create(account: String, flags: SecAccessControlCreateFlags = [.privateKeyUsage, .userPresence]) throws -> SecureEnclaveKey {
+        guard isSupported else { throw EnclaveKitError.secureEnclaveUnavailable }
         var error: Unmanaged<CFError>?
         guard let accessControl = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, flags, &error) else {
             throw error!.takeRetainedValue() as Error
@@ -55,6 +68,17 @@ struct SecureEnclaveKey: Signer {
     /// off the caller's actor, the main one for an app.
     @concurrent func sign(_ message: [UInt8]) async throws -> [UInt8] {
         let key = try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: dataRepresentation)
-        return Array(try key.signature(for: message).rawRepresentation)
+        return try Self.authenticating { Array(try key.signature(for: message).rawRepresentation) }
+    }
+
+    /// Runs an enclave operation that may show Face ID. CryptoKit throws the
+    /// `LAError` as is: a dismissed prompt becomes `cancelled`, a face not
+    /// recognised stays what it is.
+    static func authenticating<T>(_ operation: () throws -> T) throws -> T {
+        do {
+            return try operation()
+        } catch let error as LAError where [.userCancel, .appCancel, .systemCancel].contains(error.code) {
+            throw EnclaveKitError.cancelled
+        }
     }
 }

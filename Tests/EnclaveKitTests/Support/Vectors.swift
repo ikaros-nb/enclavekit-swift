@@ -153,6 +153,21 @@ struct TransactionVector: Decodable {
     let transaction: String
 }
 
+struct InstructionsVector: Decodable {
+    let relayer: String
+    let relayerFee: UInt64
+    let instructions: [NamedInstructionVector]
+
+    func instruction(_ name: String) throws -> ProgramInstructionVector {
+        try #require(instructions.first { $0.name == name }).programInstruction
+    }
+}
+
+struct NamedInstructionVector: Decodable {
+    let name: String
+    let programInstruction: ProgramInstructionVector
+}
+
 struct ProgramInstructionVector: Decodable {
     let programId: String
     let accounts: [AccountMetaVector]

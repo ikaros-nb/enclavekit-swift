@@ -36,29 +36,47 @@ enum EnclaveKitProgram {
         relayer: PublicKey,
         relayerFee: UInt64
     ) throws(InstructionError) -> Instruction {
-        let wallet = walletAddress(walletId: preimage.walletId, programId: preimage.programId)
-        let vault = vaultAddress(walletId: preimage.walletId, programId: preimage.programId)
+        // Accounts in the order of `#[derive(Accounts)]`: wallet, vault, the
+        // action's own, then relayer, Instructions sysvar, System.
+        var accounts: [AccountMeta] = [
+            .writable(walletAddress(walletId: preimage.walletId, programId: preimage.programId)),
+            .writable(vaultAddress(walletId: preimage.walletId, programId: preimage.programId)),
+        ]
+        var data: [UInt8]
 
         switch preimage.action {
         case let .transferSol(to, lamports):
-            var data = header(of: "transfer_sol", preimage)
+            data = header(of: "transfer_sol", preimage)
             data.appendLittleEndian(lamports)
-            data.appendLittleEndian(relayerFee)
-            return Instruction(
-                programId: preimage.programId,
-                accounts: [
-                    .writable(wallet),
-                    .writable(vault),
-                    .writable(to),
-                    .writableSigner(relayer),
-                    .readonly(.instructionsSysvar),
-                    .readonly(.systemProgram),
-                ],
-                data: data
-            )
-        case .transferToken, .proposeRotation, .cancelRotation, .setGuardians, .sweepVault, .closeWallet:
+            accounts.append(.writable(to))
+        case let .proposeRotation(newKey):
+            data = header(of: "propose_rotation", preimage)
+            data += newKey.bytes
+        case .cancelRotation:
+            data = header(of: "cancel_rotation", preimage)
+        case let .setGuardians(guardians):
+            data = header(of: "set_guardians", preimage)
+            data += guardians.flatMap(\.borsh)
+        case .transferToken, .sweepVault, .closeWallet:
             throw .unsupported(preimage.action)
         }
+
+        // Last argument of every handler, outside the signed bytes: the
+        // program pays back at most the signed ceiling.
+        data.appendLittleEndian(relayerFee)
+        accounts += [.writableSigner(relayer), .readonly(.instructionsSysvar), .readonly(.systemProgram)]
+        return Instruction(programId: preimage.programId, accounts: accounts, data: data)
+    }
+
+    /// Swaps in the key a guardian proposed, once the timelock has passed.
+    /// Nobody signs it: the program checks the clock, the relayer pays the
+    /// fee and gets nothing back.
+    static func confirmRotation(walletId: [UInt8], programId: PublicKey = id) -> Instruction {
+        Instruction(
+            programId: programId,
+            accounts: [.writable(walletAddress(walletId: walletId, programId: programId))],
+            data: discriminator(of: "confirm_rotation") + walletId
+        )
     }
 
     /// `sha256("global:<name>")[..8]`, what Anchor dispatches on.

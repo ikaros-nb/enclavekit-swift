@@ -10,13 +10,13 @@ import Testing
 
 struct EnclaveKitProgramTests {
     let key: KeyVector
-    let vector: TransactionVector
-    /// The `transfer_sol` case of actions.json, which transaction.json wraps.
+    let vectors: InstructionsVector
+    /// The shared header of actions.json, around its `transfer_sol` case.
     let preimage: Preimage
 
     init() throws {
         key = try loadVector("key")
-        vector = try loadVector("transaction")
+        vectors = try loadVector("instructions")
         let actions: ActionsVector = try loadVector("actions")
         let transferSol = try #require(actions.actions.first { $0.name == "transfer_sol" })
         preimage = Preimage(
@@ -33,19 +33,31 @@ struct EnclaveKitProgramTests {
         #expect(EnclaveKitProgram.id.base58 == key.programId)
     }
 
-    @Test func discriminatorIsAnchors() {
-        #expect(EnclaveKitProgram.discriminator(of: "transfer_sol") == vector.programInstruction.discriminator.bytes)
-    }
+    /// Each case of actions.json, executed by the instruction of the same
+    /// name in instructions.json.
+    @Test(arguments: try actionVectors())
+    func actionMatchesTheVector(_ action: ActionVector) throws {
+        let expected = try vectors.instruction(action.name)
+        var preimage = preimage
+        preimage.action = action.action
 
-    @Test func transferSolMatchesTheVector() throws {
         let instruction = try EnclaveKitProgram.instruction(
             executing: preimage,
-            relayer: try PublicKey(base58: vector.relayer),
-            relayerFee: vector.relayerFee
+            relayer: try PublicKey(base58: vectors.relayer),
+            relayerFee: vectors.relayerFee
         )
-        #expect(instruction.programId.base58 == vector.programInstruction.programId)
-        #expect(instruction.accounts == (try vector.programInstruction.accounts.map { try $0.accountMeta }))
-        #expect(instruction.data == vector.programInstruction.data.bytes)
+        #expect(EnclaveKitProgram.discriminator(of: action.name) == expected.discriminator.bytes)
+        #expect(instruction.programId.base58 == expected.programId)
+        #expect(instruction.accounts == (try expected.accounts.map { try $0.accountMeta }))
+        #expect(instruction.data == expected.data.bytes)
+    }
+
+    @Test func confirmRotationMatchesTheVector() throws {
+        let expected = try vectors.instruction("confirm_rotation")
+        let instruction = EnclaveKitProgram.confirmRotation(walletId: key.walletId.bytes)
+        #expect(instruction.programId.base58 == expected.programId)
+        #expect(instruction.accounts == (try expected.accounts.map { try $0.accountMeta }))
+        #expect(instruction.data == expected.data.bytes)
     }
 
     @Test func actionsWithoutHandlerThrow() throws {

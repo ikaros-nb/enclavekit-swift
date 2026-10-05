@@ -7,8 +7,9 @@
 
 import Foundation
 
-/// A smart wallet seen from the device: the key that authorises it, the
-/// relayer that pays for it, the RPC that reads it.
+/// A smart wallet seen from one device: the device's key, which signs as
+/// the wallet's owner or as one of its guardians, the relayer that pays,
+/// the RPC that reads it.
 public struct Wallet: Sendable {
     public enum Status: Equatable, Sendable {
         /// No action yet. The address already receives; the first send
@@ -32,14 +33,17 @@ public struct Wallet: Sendable {
 
     let signer: any Signer
     /// SHA-256 of the key that made the wallet: the seed of both addresses.
+    /// A rotation never changes it.
     let walletId: [UInt8]
     let cluster: Cluster
     private let rpc: SolanaRPC
     private let kora: Kora
 
-    init(signer: any Signer, kora: Kora, rpc: SolanaRPC = SolanaRPC(), cluster: Cluster = .devnet) {
+    /// `walletId` defaults to the wallet `signer` made. Another one when the
+    /// device recovered a wallet, or guards it.
+    init(signer: any Signer, walletId: [UInt8]? = nil, kora: Kora, rpc: SolanaRPC = SolanaRPC(), cluster: Cluster = .devnet) {
         self.signer = signer
-        self.walletId = EnclaveKit.walletId(of: signer.publicKey)
+        self.walletId = walletId ?? EnclaveKit.walletId(of: signer.publicKey)
         self.cluster = cluster
         self.rpc = rpc
         self.kora = kora
@@ -88,7 +92,7 @@ public struct Wallet: Sendable {
     /// may empty it.
     func prepare(_ action: Action, spending amount: Lamports = 0) async throws -> ActionRequest {
         let state = try await state()
-        if let state, state.activeKey != signer.publicKey { throw EnclaveKitError.keyReplaced }
+        try requireAuthority(over: state, for: action)
         let maxFee = try await relayerFee(state)
         let reserved = maxFee + (try await rpc.minimumBalanceForRentExemption(space: 0))
         let balance = try await rpc.balance(address)
@@ -103,7 +107,7 @@ public struct Wallet: Sendable {
     /// approved; the nonce and the expiry are read now, right before.
     func execute(_ action: Action, maxRelayerFee: UInt64) async throws -> Receipt {
         let state = try await state()
-        if let state, state.activeKey != signer.publicKey { throw EnclaveKitError.keyReplaced }
+        try requireAuthority(over: state, for: action)
         // Lower than approved if another send created the state meanwhile.
         let relayerFee = min(try await relayerFee(state), maxRelayerFee)
         let relayer = try await kora.payerSigner()
@@ -119,16 +123,40 @@ public struct Wallet: Sendable {
         let instruction = try EnclaveKitProgram.instruction(executing: preimage, relayer: relayer, relayerFee: relayerFee)
 
         let signature = try await signer.sign(preimage.bytes)
-        // Not signed by the enclave: fetched after Face ID, it keeps its whole life.
-        let blockhash = try await kora.blockhash()
-        let message = Message(
-            instructions: [
+        return try await send(
+            [
                 Secp256r1Program.instruction(publicKey: signer.publicKey, signature: signature, message: preimage.bytes),
                 instruction,
             ],
-            payer: relayer,
-            recentBlockhash: blockhash
+            payer: relayer
         )
+    }
+
+    /// Swaps in the key a guardian proposed, once the timelock has passed.
+    /// Nothing to sign, no Face ID: anyone may send it, the relayer pays the
+    /// fee and gets nothing back.
+    func confirmRotation() async throws -> Receipt {
+        try await send(
+            [EnclaveKitProgram.confirmRotation(walletId: walletId, programId: programId)],
+            payer: try await kora.payerSigner()
+        )
+    }
+
+    /// The active key signs every action. A guardian only proposes a new
+    /// key. Before the first action there is no state: the key that made
+    /// the wallet creates it.
+    private func requireAuthority(over state: SmartWallet?, for action: Action) throws {
+        guard let state, state.activeKey != signer.publicKey else { return }
+        if case .proposeRotation = action, state.guardians.contains(.p256(signer.publicKey)) { return }
+        throw EnclaveKitError.keyReplaced
+    }
+
+    /// Kora signs as fee payer and sends, then the cluster confirms.
+    private func send(_ instructions: [Instruction], payer relayer: PublicKey) async throws -> Receipt {
+        // Not signed by the enclave: fetched last, after any Face ID, it
+        // keeps its whole life.
+        let blockhash = try await kora.blockhash()
+        let message = Message(instructions: instructions, payer: relayer, recentBlockhash: blockhash)
         let receipt: Receipt
         do {
             receipt = self.receipt(try await kora.signAndSend(message))

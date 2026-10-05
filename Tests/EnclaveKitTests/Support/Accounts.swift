@@ -18,10 +18,17 @@ func accountJSON(owner: String = "dG4h3aizVEW1bKjzkGsfk6zqcfa2MVn2DjavPniesSY", 
 }
 
 /// The devnet account of `SmartWalletTests` (nonce 1), moved to the wallet
-/// of `SoftwareKey.test`, with `activeKey` and `attested` as given.
-func stateData(activeKey: CompressedP256Key = SoftwareKey.test.publicKey, attested: Bool = false) -> [UInt8] {
+/// of `SoftwareKey.test`, with `activeKey` and `attested` as given, and
+/// `guardian` in the first slot.
+func stateData(activeKey: CompressedP256Key = SoftwareKey.test.publicKey, attested: Bool = false, guardian: CompressedP256Key? = nil) -> [UInt8] {
     var data = SmartWalletTests.devnetAccount
     data.replaceSubrange(8..<73, with: walletId(of: SoftwareKey.test.publicKey) + activeKey.bytes)
     data[81] = attested ? 1 : 0
+    if let guardian {
+        // No rotation (82): the first slot's `None` is at 83. The account
+        // keeps its size, the zeros at its end make room.
+        data.replaceSubrange(83...83, with: [1] + guardian.bytes)
+        data.removeLast(guardian.bytes.count)
+    }
     return data
 }

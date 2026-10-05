@@ -47,6 +47,35 @@ struct ActionRequestTests {
         }
     }
 
+    /// A guardian's device signs for someone else's wallet, a rotation
+    /// proposal only: it never spends.
+    @Test func guardianProposesButNeverSpends() async throws {
+        let guardian = SoftwareKey()
+        let wallet = wallet(state: accountJSON(data: stateData(guardian: guardian.publicKey)), balance: 20_000_000, signer: guardian)
+        #expect(try await wallet.prepare(.proposeRotation(newKey: SoftwareKey().publicKey)).maxFee == 10_000)
+        await #expect(throws: EnclaveKitError.self) {
+            try await wallet.prepareTransfer(10_000_000, to: Self.recipient)
+        }
+    }
+
+    @Test func strangerCannotPropose() async throws {
+        let wallet = wallet(state: accountJSON(data: stateData()), balance: 20_000_000, signer: SoftwareKey())
+        await #expect(throws: EnclaveKitError.self) {
+            try await wallet.prepare(.proposeRotation(newKey: SoftwareKey().publicKey))
+        }
+    }
+
+    /// Nothing for the enclave to sign, so no Face ID: the transaction holds
+    /// `confirm_rotation` alone.
+    @Test func confirmRotationSignsNothing() async throws {
+        let kora = Self.relayer { params in
+            let transaction = Self.transaction(params)
+            #expect(transaction.firstRange(of: EnclaveKitProgram.discriminator(of: "confirm_rotation")) != nil)
+            #expect(transaction.firstRange(of: Secp256r1Program.id.bytes) == nil)
+        }
+        #expect(try await wallet(kora: kora).confirmRotation() == Self.sent)
+    }
+
     /// Approved on the first action, authorized once the state exists: the
     /// enclave signs the approved ceiling, the relayer gets back only the fee.
     @Test func authorizeSignsTheApprovedCeiling() async throws {
@@ -77,10 +106,10 @@ struct ActionRequestTests {
         }
     }
 
-    /// `SoftwareKey.test`'s wallet on a devnet that answers with `state` at
-    /// the state's address, `balance` in the vault, and `err` for any sent
-    /// transaction.
-    func wallet(state: String = "null", balance: UInt64 = 0, err: String = "null", kora: Kora? = nil) -> Wallet {
+    /// `SoftwareKey.test`'s wallet, seen from `signer`, on a devnet that
+    /// answers with `state` at the state's address, `balance` in the vault,
+    /// and `err` for any sent transaction.
+    func wallet(state: String = "null", balance: UInt64 = 0, err: String = "null", kora: Kora? = nil, signer: any Signer = SoftwareKey.test) -> Wallet {
         let rpc = SolanaRPC(transport: stub { method, params in
             switch method {
             case "getAccountInfo":
@@ -99,7 +128,7 @@ struct ActionRequestTests {
                 nil
             }
         })
-        return Wallet(signer: SoftwareKey.test, kora: kora ?? Self.relayer(), rpc: rpc)
+        return Wallet(signer: signer, walletId: walletId(of: SoftwareKey.test.publicKey), kora: kora ?? Self.relayer(), rpc: rpc)
     }
 
     /// Kora as the tests see it: `check` gets what `signAndSendTransaction`
@@ -120,13 +149,16 @@ struct ActionRequestTests {
         })
     }
 
+    /// The transaction Kora receives, empty if there is none.
+    static func transaction(_ params: Any?) -> [UInt8] {
+        (params as? [String: String])?["transaction"].flatMap { Data(base64Encoded: $0) }.map(Array.init) ?? []
+    }
+
     /// Finds the `transfer_sol` arguments in the transaction Kora receives
     /// and checks them.
     static func checkTransferSol(_ params: Any?, nonce: UInt64, maxRelayerFee: UInt64, relayerFee: UInt64) {
-        guard let base64 = (params as? [String: String])?["transaction"],
-              let transaction = Data(base64Encoded: base64).map(Array.init),
-              let start = transaction.firstRange(of: EnclaveKitProgram.discriminator(of: "transfer_sol"))?.upperBound
-        else {
+        let transaction = transaction(params)
+        guard let start = transaction.firstRange(of: EnclaveKitProgram.discriminator(of: "transfer_sol"))?.upperBound else {
             Issue.record("no transfer_sol in what Kora received")
             return
         }

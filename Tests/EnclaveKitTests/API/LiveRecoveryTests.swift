@@ -17,8 +17,6 @@ import Testing
 ///     KORA_URL=http://127.0.0.1:8080 LIVE_SEND=1 swift test --filter LiveRecoveryTests
 @Suite(.enabled(if: ["KORA_URL", "LIVE_SEND"].allSatisfy { ProcessInfo.processInfo.environment[$0] != nil }))
 struct LiveRecoveryTests {
-    /// `RotationTooEarly`, the 17th error of the program: 6000 + 16.
-    static let rotationTooEarly = "custom program error: 0x1780"
     /// Sets the guardian, pays three fees, keeps the vault's rent.
     static let funding: Lamports = 3_000_000
 
@@ -31,8 +29,10 @@ struct LiveRecoveryTests {
     }
 
     /// The owner adds a guardian; the guardian proposes the new device's key;
-    /// the owner cancels; the guardian proposes again; once the timelock has
+    /// the owner cancels; the guardian proposes again; once the delay has
     /// passed, the new device confirms and spends from the same wallet.
+    /// `recoverWallet` and `deleteDeviceKey` need the Secure Enclave:
+    /// `EnclaveKitClientTests` has them.
     @Test func guardianMovesTheWalletToANewDevice() async throws {
         let funder = Wallet(signer: SoftwareKey.funder, kora: kora)
         // The funding, then the funder's own fee and rent.
@@ -65,18 +65,25 @@ struct LiveRecoveryTests {
 
         try await authorize(owner.prepareCancelRecovery())
         #expect(try await recovery(seenBy: owner) == nil)
+        #expect(try await newDevice.status() == .keyReplaced)
 
         try await authorize(guardian.prepareRecovery(to: newDevice.deviceKey))
         let second = try #require(try await recovery(seenBy: owner))
         #expect(try await guardian.status() == .guarding(recovery: second))
+        #expect(try await newDevice.status() == .recovering(second))
 
-        // Kora's simulation stops it: nothing is sent, nothing is paid.
+        // The SDK waits for the delay's end; the program does too, without
+        // it: Kora's simulation stops it, nothing is sent, nothing is paid.
+        await #expect(throws: EnclaveKitError.recoveryNotOpen(opensAt: second.opensAt)) {
+            try await newDevice.confirmRecovery()
+        }
         let tooEarly = await #expect(throws: EnclaveKitError.self) {
             try await newDevice.confirmRotation()
         }
-        #expect(tooEarly?.localizedDescription.contains(Self.rotationTooEarly) == true)
+        #expect(tooEarly?.localizedDescription.contains(EnclaveKitProgram.rotationTooEarly) == true)
 
-        print(try await confirm(newDevice, opensAt: second.opensAt).explorerURL)
+        try await Task.sleep(for: .seconds(max(0, second.opensAt.timeIntervalSinceNow)))
+        print(try await newDevice.confirmRecovery().explorerURL)
         #expect(try await newDevice.status() == .active(attested: false, recovery: nil))
         #expect(try await owner.status() == .keyReplaced)
         // The guardian still guards the wallet on its new key.
@@ -94,19 +101,5 @@ struct LiveRecoveryTests {
     private func recovery(seenBy owner: Wallet) async throws -> Recovery? {
         guard case let .active(_, recovery) = try await owner.status() else { return nil }
         return recovery
-    }
-
-    /// The program reads the cluster's clock, a few seconds off the Mac's:
-    /// waits for `opensAt`, then tries again while it is still too early.
-    private func confirm(_ wallet: Wallet, opensAt: Date) async throws -> Receipt {
-        try await Task.sleep(for: .seconds(max(0, opensAt.timeIntervalSinceNow)))
-        for _ in 0..<12 {
-            do {
-                return try await wallet.confirmRotation()
-            } catch let EnclaveKitError.rejected(reason) where reason.contains(Self.rotationTooEarly) {
-                try await Task.sleep(for: .seconds(5))
-            }
-        }
-        throw EnclaveKitError.rejected(reason: "still too early a minute past the delay: is the devnet build deployed?")
     }
 }

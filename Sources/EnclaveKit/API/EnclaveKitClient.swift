@@ -17,6 +17,9 @@ public struct EnclaveKitClient: Sendable {
     let account: String
     /// Keychain account of the wallets this device guards.
     var guardedAccount: String { account + ".guarded" }
+    /// Keychain account of the wallet this device recovered, absent while
+    /// it has the one its key made.
+    var recoveredAccount: String { account + ".recovered" }
     private let rpc: SolanaRPC
     private let kora: Kora
 
@@ -24,26 +27,61 @@ public struct EnclaveKitClient: Sendable {
         self.init(config: config, account: "wallet")
     }
 
-    /// Tests pick their own account, away from the real wallet's.
-    init(config: EnclaveKitConfig, account: String) {
+    /// Tests pick their own account, away from the real wallet's, and may
+    /// answer for the network.
+    init(config: EnclaveKitConfig, account: String, transport: @escaping HTTPTransport = { try await URLSession.shared.data(for: $0) }) {
         self.config = config
         self.account = account
-        rpc = SolanaRPC(url: config.cluster.rpcURL)
-        kora = Kora(url: config.relayerURL, apiKey: config.relayerAPIKey)
+        rpc = SolanaRPC(url: config.cluster.rpcURL, transport: transport)
+        kora = Kora(url: config.relayerURL, apiKey: config.relayerAPIKey, transport: transport)
     }
 
-    /// The wallet of this device's key, `nil` until `createWallet()`. Reads
-    /// the Keychain only: no network, no Face ID. The key outlives the app:
-    /// a reinstall finds the same wallet.
+    /// The wallet of this device's key, `nil` until `createWallet()`: the
+    /// one the key made, or the one it recovered. Reads the Keychain only:
+    /// no network, no Face ID. The key outlives the app: a reinstall finds
+    /// the same wallet.
     public func wallet() throws -> Wallet? {
-        try SecureEnclaveKey.load(account: account).map(wallet(of:))
+        guard let key = try SecureEnclaveKey.load(account: account) else { return nil }
+        return wallet(of: key, id: try recoveredID())
     }
 
     /// Makes the device key in the Secure Enclave. Throws `walletExists` if
     /// there is one already: the wallet is that key, it is never replaced.
+    /// A device that replaces a lost one starts here too: a guardian
+    /// proposes its `deviceKey`, then `recoverWallet(_:)`.
     public func createWallet() throws -> Wallet {
         guard try SecureEnclaveKey.load(account: account) == nil else { throw EnclaveKitError.walletExists }
-        return wallet(of: try SecureEnclaveKey.create(account: account))
+        return wallet(of: try SecureEnclaveKey.create(account: account), id: nil)
+    }
+
+    /// Takes on the wallet `id`, scanned on a guardian's screen once the
+    /// guardian proposed this device's `deviceKey`. Kept in the Keychain next
+    /// to the key: from now on `wallet()` returns it, `recovering` until
+    /// `confirmRecovery()` after the delay. Throws `noRecovery` if no
+    /// guardian proposed this device's key for `id`, `walletExists` while
+    /// this device signs for its own.
+    public func recoverWallet(_ id: Wallet.ID) async throws -> Wallet {
+        guard let key = try SecureEnclaveKey.load(account: account) else { throw EnclaveKitError.noWallet }
+        let current = wallet(of: key, id: try recoveredID())
+        if current.id == id { return current }
+        if case .active = try await current.status() { throw EnclaveKitError.walletExists }
+        let recovered = wallet(of: key, id: id)
+        switch try await recovered.status() {
+        case .recovering, .active: try Keychain.set(Data(id.bytes), account: recoveredAccount)
+        case .notOnChainYet, .keyReplaced: throw EnclaveKitError.noRecovery
+        }
+        return recovered
+    }
+
+    /// Deletes this device's key, for good. The wallet stays on-chain with
+    /// what it holds: only its guardians can move it to another key. The
+    /// wallets this device guards lose it as guardian: their owners name
+    /// another. The key goes last: a failure halfway never leaves a list a
+    /// later key would take for its own.
+    public func deleteDeviceKey() throws {
+        try Keychain.delete(guardedAccount)
+        try Keychain.delete(recoveredAccount)
+        try Keychain.delete(account)
     }
 
     /// The wallets this device guards, in the order it took them on. Kept in
@@ -72,11 +110,16 @@ public struct EnclaveKitClient: Sendable {
         return stride(from: 0, to: bytes.count - 31, by: 32).map { Wallet.ID(bytes: Array(bytes[$0..<$0 + 32])) }
     }
 
-    private func wallet(of key: SecureEnclaveKey) -> Wallet {
-        Wallet(signer: key, kora: kora, rpc: rpc, cluster: config.cluster)
+    private func recoveredID() throws -> Wallet.ID? {
+        try Keychain.read(recoveredAccount).map { Wallet.ID(bytes: Array($0)) }
+    }
+
+    /// `id` `nil`: the wallet `key` made.
+    private func wallet(of key: SecureEnclaveKey, id: Wallet.ID?) -> Wallet {
+        Wallet(signer: key, walletId: id?.bytes, kora: kora, rpc: rpc, cluster: config.cluster)
     }
 
     private func guardedWallet(_ id: Wallet.ID, key: SecureEnclaveKey) -> GuardedWallet {
-        GuardedWallet(wallet: Wallet(signer: key, walletId: id.bytes, kora: kora, rpc: rpc, cluster: config.cluster))
+        GuardedWallet(wallet: wallet(of: key, id: id))
     }
 }

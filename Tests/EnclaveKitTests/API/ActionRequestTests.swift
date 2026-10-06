@@ -141,8 +141,9 @@ struct ActionRequestTests {
     }
 
     /// Kora as the tests see it: `check` gets what `signAndSendTransaction`
-    /// receives, the answer is always `sent`, unless `errors` says otherwise.
-    static func relayer(errors: [String: String] = [:], check: @escaping @Sendable (_ params: Any?) -> Void = { _ in }) -> Kora {
+    /// receives, the answer is always `sent`, unless `errors` says otherwise
+    /// or `check` throws a `ServerError`.
+    static func relayer(errors: [String: String] = [:], check: @escaping @Sendable (_ params: Any?) throws -> Void = { _ in }) -> Kora {
         Kora(url: URL(string: "http://kora.invalid")!, transport: stub(errors: errors) { method, params in
             switch method {
             case "getPayerSigner":
@@ -150,7 +151,7 @@ struct ActionRequestTests {
             case "getBlockhash":
                 return #"{"blockhash":"AByCTxLPRZPoyK22KdMxa3xkCbcNbeNWzVeEvh6UcJs9"}"#
             case "signAndSendTransaction":
-                check(params)
+                try check(params)
                 return #"{"signature":"5VERv8NM","signed_transaction":"AQ==","signer_pubkey":"93MB2qRDNVLxbmmPuYpLdAqn3u2x9ZhaVZK5wELHueP8"}"#
             default:
                 return nil

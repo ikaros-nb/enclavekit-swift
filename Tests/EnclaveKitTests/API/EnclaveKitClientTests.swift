@@ -22,6 +22,7 @@ final class EnclaveKitClientTests {
     deinit {
         try? Keychain.delete(client.account)
         try? Keychain.delete(client.guardedAccount)
+        try? Keychain.delete(client.recoveredAccount)
     }
 
     @Test func noWalletBeforeCreate() throws {
@@ -57,6 +58,66 @@ final class EnclaveKitClientTests {
         #expect(guarded.allSatisfy { $0.wallet.deviceKey == own.deviceKey })
     }
 
+    /// Its owner's key, no proposal.
+    @Test func recoveryNeedsAProposal() async throws {
+        let own = try client.createWallet()
+        await #expect(throws: EnclaveKitError.noRecovery) {
+            try await online([Self.someWallet: stateData()]).recoverWallet(Self.someWallet)
+        }
+        #expect(try client.wallet()?.id == own.id)
+    }
+
+    /// A guardian proposed this device's key, then showed the wallet.
+    @Test func recoveredWalletIsFoundAgain() async throws {
+        let own = try client.createWallet()
+        let pending = rotation(to: own.deviceKey.key, secondsAgo: 10)
+        let recovered = try await online([Self.someWallet: stateData(rotation: pending)]).recoverWallet(Self.someWallet)
+        #expect(try await recovered.status() == .recovering(Recovery(pending, cluster: .devnet)))
+        let found = try #require(try client.wallet())
+        #expect(found.id == Self.someWallet)
+        #expect(found.deviceKey == own.deviceKey)
+    }
+
+    /// This device signs for its own wallet: taking on another would hide it.
+    @Test func walletInUseIsKept() async throws {
+        let own = try client.createWallet()
+        let device = online([
+            own.id: stateData(activeKey: own.deviceKey.key),
+            Self.someWallet: stateData(rotation: rotation(to: own.deviceKey.key, secondsAgo: 10)),
+        ])
+        await #expect(throws: EnclaveKitError.walletExists) { try await device.recoverWallet(Self.someWallet) }
+        #expect(try client.wallet()?.id == own.id)
+    }
+
+    @Test func deletedKeyTakesItsListsAlong() async throws {
+        let own = try client.createWallet()
+        _ = try client.guardWallet(Self.someWallet)
+        let pending = rotation(to: own.deviceKey.key, secondsAgo: 10)
+        _ = try await online([Self.someWallet: stateData(rotation: pending)]).recoverWallet(Self.someWallet)
+
+        try client.deleteDeviceKey()
+        #expect(try client.wallet() == nil)
+        #expect(try client.guardedWallets().isEmpty)
+
+        // A new key starts with its own wallet, and guards nothing.
+        let next = try client.createWallet()
+        #expect(next.deviceKey != own.deviceKey)
+        #expect(try client.wallet()?.id == next.id)
+        #expect(try client.guardedWallets().isEmpty)
+    }
+
     /// The wallet of key.json.
     static let someWallet = try! Wallet.ID("enclavekit:wallet:FAnBvyFqTsuE8HTbq9yCDS4fuWyHnvH8CH5Vi5EqKcNQ")
+
+    /// This device, on a devnet that holds `states`, by wallet, and no other
+    /// account.
+    func online(_ states: [Wallet.ID: [UInt8]]) -> EnclaveKitClient {
+        let accounts = Dictionary(uniqueKeysWithValues: states.map { id, data in
+            (EnclaveKitProgram.walletAddress(walletId: id.bytes).base58, accountJSON(data: data))
+        })
+        return EnclaveKitClient(config: client.config, account: client.account, transport: stub { method, params in
+            guard method == "getAccountInfo", let address = (params as? [Any])?.first as? String else { return nil }
+            return #"{"context":{"slot":1},"value":\#(accounts[address] ?? "null")}"#
+        })
+    }
 }

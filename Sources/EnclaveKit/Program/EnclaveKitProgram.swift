@@ -17,6 +17,10 @@ enum EnclaveKitProgram {
         case unsupported(Action)
     }
 
+    /// How Kora's simulation reports `RotationTooEarly`, error 6000 + 16:
+    /// `confirm_rotation` before the delay's end, by the cluster's clock.
+    static let rotationTooEarly = "custom program error: 0x1780"
+
     /// State account of the wallet.
     static func walletAddress(walletId: [UInt8], programId: PublicKey = id) -> PublicKey {
         address(seed: Seeds.wallet, walletId: walletId, programId: programId)

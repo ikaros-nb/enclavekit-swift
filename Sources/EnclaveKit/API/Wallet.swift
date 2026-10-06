@@ -9,8 +9,8 @@ import Foundation
 
 /// A smart wallet seen from one device: the device's key, which signs as
 /// the wallet's owner or as one of its guardians, the relayer that pays,
-/// the RPC that reads it. The app sees its owner's side; `GuardedWallet`
-/// shows a guardian's.
+/// the RPC that reads it. The app sees its owner's side, or a new device's
+/// while it recovers the wallet; `GuardedWallet` shows a guardian's.
 public struct Wallet: Sendable {
     public enum Status: Equatable, Sendable {
         /// No action yet. The address already receives; the first send
@@ -21,7 +21,12 @@ public struct Wallet: Sendable {
         /// the wallet to another key. Not this user's doing? Cancel it before
         /// it opens.
         case active(attested: Bool, recovery: Recovery?)
-        /// The wallet rotated to another key: this device can no longer sign.
+        /// A guardian proposed this device's key: from `recovery.opensAt`,
+        /// `confirmRecovery()` moves the wallet here. Until it does, the
+        /// owner can still cancel.
+        case recovering(Recovery)
+        /// Another key signs for the wallet: it moved away from this device,
+        /// or the recovery toward it was cancelled, or lapsed.
         case keyReplaced
     }
 
@@ -82,8 +87,10 @@ public struct Wallet: Sendable {
 
     public func status() async throws -> Status {
         guard let state = try await state() else { return .notOnChainYet }
-        guard state.activeKey == signer.publicKey else { return .keyReplaced }
-        return .active(attested: state.attested, recovery: recovery(in: state))
+        let recovery = recovery(in: state)
+        if state.activeKey == signer.publicKey { return .active(attested: state.attested, recovery: recovery) }
+        if let recovery, recovery.newKey == deviceKey { return .recovering(recovery) }
+        return .keyReplaced
     }
 
     /// The devices that may start a recovery, none before the first action.
@@ -172,6 +179,29 @@ public struct Wallet: Sendable {
             ],
             payer: relayer
         )
+    }
+
+    /// Ends the recovery toward this device once it opened: the wallet's key
+    /// becomes this device's. Nothing to sign, no Face ID: the relayer pays
+    /// the fee. Throws `recoveryNotOpen` before `opensAt`, `noRecovery` if
+    /// none is pending toward this device.
+    public func confirmRecovery() async throws -> Receipt {
+        try await confirmRecovery(retryingEvery: .seconds(1))
+    }
+
+    /// The program reads the cluster's clock, a second or so behind this
+    /// device's: past `opensAt`, a "too early" is tried again.
+    func confirmRecovery(retryingEvery delay: Duration, attempts: Int = 10) async throws -> Receipt {
+        guard case let .recovering(recovery) = try await status() else { throw EnclaveKitError.noRecovery }
+        guard recovery.opensAt <= .now else { throw EnclaveKitError.recoveryNotOpen(opensAt: recovery.opensAt) }
+        for _ in 0..<attempts {
+            do {
+                return try await confirmRotation()
+            } catch let EnclaveKitError.rejected(reason) where reason.contains(EnclaveKitProgram.rotationTooEarly) {
+                try await Task.sleep(for: delay)
+            }
+        }
+        throw EnclaveKitError.recoveryNotOpen(opensAt: recovery.opensAt)
     }
 
     /// Swaps in the key a guardian proposed, once the timelock has passed.

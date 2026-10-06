@@ -25,6 +25,12 @@ public enum EnclaveKitError: Error, Equatable, Sendable {
     /// The guarded wallet does not name this device: its owner adds it with
     /// `prepareSetGuardians`.
     case notAGuardian
+    /// No guardian proposed this device's key for the wallet, or its owner
+    /// cancelled: a guardian scans this device's key first.
+    case noRecovery
+    /// The recovery's delay is still running: the owner has until `opensAt`
+    /// to cancel it.
+    case recoveryNotOpen(opensAt: Date)
     /// The vault cannot pay the amount, the fee and keep its own rent:
     /// `available` is the most it can send.
     case insufficientFunds(available: Lamports)
@@ -44,7 +50,8 @@ public enum EnclaveKitError: Error, Equatable, Sendable {
     public var receipt: Receipt? {
         switch self {
         case let .failed(receipt, _), let .notConfirmed(receipt): receipt
-        case .walletExists, .noWallet, .secureEnclaveUnavailable, .keyReplaced, .notAGuardian, .insufficientFunds, .cancelled, .rejected: nil
+        case .walletExists, .noWallet, .secureEnclaveUnavailable, .keyReplaced, .notAGuardian, .noRecovery, .recoveryNotOpen,
+             .insufficientFunds, .cancelled, .rejected: nil
         }
     }
 }
@@ -62,6 +69,10 @@ extension EnclaveKitError: LocalizedError {
             "This wallet moved to another key: this device can no longer sign for it."
         case .notAGuardian:
             "This wallet does not name this device as guardian: its owner has to add it first."
+        case .noRecovery:
+            "No guardian proposed this device's key for this wallet: let a guardian scan it first."
+        case let .recoveryNotOpen(opensAt):
+            "This recovery opens at \(opensAt.formatted(date: .abbreviated, time: .standard)): confirm it then."
         case let .insufficientFunds(available):
             "This wallet can send at most \(available): it keeps enough for the fee and its own rent."
         case .cancelled:

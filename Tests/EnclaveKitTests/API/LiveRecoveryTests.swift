@@ -17,8 +17,6 @@ import Testing
 ///     KORA_URL=http://127.0.0.1:8080 LIVE_SEND=1 swift test --filter LiveRecoveryTests
 @Suite(.enabled(if: ["KORA_URL", "LIVE_SEND"].allSatisfy { ProcessInfo.processInfo.environment[$0] != nil }))
 struct LiveRecoveryTests {
-    /// `ROTATION_DELAY` of the devnet build, in seconds.
-    static let rotationDelay = 60
     /// `RotationTooEarly`, the 17th error of the program: 6000 + 16.
     static let rotationTooEarly = "custom program error: 0x1780"
     /// Sets the guardian, pays three fees, keeps the vault's rent.
@@ -42,26 +40,35 @@ struct LiveRecoveryTests {
             try await funder.balance() >= Lamports(Self.funding.value + 1_000_000),
             "fund the funder: solana transfer \(funder.address) 0.05 --allow-unfunded-recipient -u devnet"
         )
-        let ownerKey = SoftwareKey(), guardianKey = SoftwareKey(), newKey = SoftwareKey()
-        let owner = Wallet(signer: ownerKey, kora: kora)
-        let guardian = Wallet(signer: guardianKey, walletId: owner.walletId, kora: kora)
-        let newDevice = Wallet(signer: newKey, walletId: owner.walletId, kora: kora)
+        let guardianKey = SoftwareKey()
+        let owner = Wallet(signer: SoftwareKey(), kora: kora)
+        // What each device scans on another's screen: the guardian's key,
+        // then the wallet to guard and recover.
+        let scannedGuardian = try DeviceKey(Wallet(signer: guardianKey, kora: kora).deviceKey.description)
+        let scannedWallet = try Wallet.ID(owner.id.description)
+        let guardian = GuardedWallet(wallet: Wallet(signer: guardianKey, walletId: scannedWallet.bytes, kora: kora))
+        let newDevice = Wallet(signer: SoftwareKey(), walletId: scannedWallet.bytes, kora: kora)
         print(owner.explorerURL)
 
         try await authorize(funder.prepareTransfer(Self.funding, to: owner.address))
 
         // First action of the wallet: it also creates the state.
-        try await authorize(owner.prepare(.setGuardians([.p256(guardianKey.publicKey), .none, .none])))
-        #expect(try await owner.state()?.guardians.first == .p256(guardianKey.publicKey))
+        try await authorize(owner.prepareSetGuardians([scannedGuardian]))
+        #expect(try await owner.guardians() == [scannedGuardian])
+        #expect(try await guardian.status() == .guarding(recovery: nil))
 
-        try await authorize(guardian.prepare(.proposeRotation(newKey: newKey.publicKey)))
-        #expect(try await owner.state()?.rotation?.newKey == newKey.publicKey)
+        try await authorize(guardian.prepareRecovery(to: newDevice.deviceKey))
+        let first = try #require(try await recovery(seenBy: owner))
+        #expect(first.newKey == newDevice.deviceKey)
+        // Dated by the cluster's clock, a few seconds off the Mac's.
+        #expect(abs(first.opensAt.timeIntervalSinceNow - Cluster.devnet.recoveryDelay) < 30)
 
-        try await authorize(owner.prepare(.cancelRotation))
-        #expect(try await owner.state()?.rotation == nil)
+        try await authorize(owner.prepareCancelRecovery())
+        #expect(try await recovery(seenBy: owner) == nil)
 
-        try await authorize(guardian.prepare(.proposeRotation(newKey: newKey.publicKey)))
-        #expect(try await owner.state()?.rotation?.newKey == newKey.publicKey)
+        try await authorize(guardian.prepareRecovery(to: newDevice.deviceKey))
+        let second = try #require(try await recovery(seenBy: owner))
+        #expect(try await guardian.status() == .guarding(recovery: second))
 
         // Kora's simulation stops it: nothing is sent, nothing is paid.
         let tooEarly = await #expect(throws: EnclaveKitError.self) {
@@ -69,9 +76,11 @@ struct LiveRecoveryTests {
         }
         #expect(tooEarly?.localizedDescription.contains(Self.rotationTooEarly) == true)
 
-        print(try await confirmOnceOpen(newDevice).explorerURL)
-        #expect(try await newDevice.status() == .active(attested: false))
+        print(try await confirm(newDevice, opensAt: second.opensAt).explorerURL)
+        #expect(try await newDevice.status() == .active(attested: false, recovery: nil))
         #expect(try await owner.status() == .keyReplaced)
+        // The guardian still guards the wallet on its new key.
+        #expect(try await guardian.status() == .guarding(recovery: nil))
 
         // Same wallet, new key: it spends, and pays the funder back a little.
         try await authorize(newDevice.prepareTransfer(400_000, to: funder.address))
@@ -81,10 +90,16 @@ struct LiveRecoveryTests {
         print(request.summary, try await request.authorize().explorerURL)
     }
 
+    /// The recovery the owner sees pending, if any.
+    private func recovery(seenBy owner: Wallet) async throws -> Recovery? {
+        guard case let .active(_, recovery) = try await owner.status() else { return nil }
+        return recovery
+    }
+
     /// The program reads the cluster's clock, a few seconds off the Mac's:
-    /// waits the delay, then tries again while it is still too early.
-    private func confirmOnceOpen(_ wallet: Wallet) async throws -> Receipt {
-        try await Task.sleep(for: .seconds(Self.rotationDelay))
+    /// waits for `opensAt`, then tries again while it is still too early.
+    private func confirm(_ wallet: Wallet, opensAt: Date) async throws -> Receipt {
+        try await Task.sleep(for: .seconds(max(0, opensAt.timeIntervalSinceNow)))
         for _ in 0..<12 {
             do {
                 return try await wallet.confirmRotation()

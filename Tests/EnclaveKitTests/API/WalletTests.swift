@@ -32,7 +32,39 @@ struct WalletTests {
 
     @Test func stateOfThisKeyIsActive() async throws {
         let wallet = wallet(stateAccount: accountJSON(data: stateData(attested: true)))
-        #expect(try await wallet.status() == .active(attested: true))
+        #expect(try await wallet.status() == .active(attested: true, recovery: nil))
+    }
+
+    /// Proposed 10 seconds ago: the devnet timelock opens 50 seconds from
+    /// now, then stays open 7 days.
+    @Test func pendingRecoveryShowsItsTimelock() async throws {
+        let newKey = SoftwareKey().publicKey
+        let pending = rotation(to: newKey, secondsAgo: 10)
+        let status = try await wallet(stateAccount: accountJSON(data: stateData(rotation: pending))).status()
+        guard case let .active(_, recovery?) = status else {
+            Issue.record("no recovery in \(status)")
+            return
+        }
+        #expect(recovery.newKey == DeviceKey(newKey))
+        #expect(recovery.opensAt == Date(timeIntervalSince1970: TimeInterval(pending.proposedAt + 60)))
+        #expect(recovery.closesAt == recovery.opensAt + 7 * 24 * 60 * 60)
+    }
+
+    /// Nobody confirmed it within its window: it no longer blocks anything.
+    @Test func lapsedRecoveryIsGone() async throws {
+        let lapsed = rotation(to: SoftwareKey().publicKey, secondsAgo: 60 + 7 * 24 * 60 * 60 + 1)
+        let wallet = wallet(stateAccount: accountJSON(data: stateData(rotation: lapsed)))
+        #expect(try await wallet.status() == .active(attested: false, recovery: nil))
+    }
+
+    @Test func guardiansAreTheKeysInTheSlots() async throws {
+        let guardian = SoftwareKey().publicKey
+        let wallet = wallet(stateAccount: accountJSON(data: stateData(guardian: guardian)))
+        #expect(try await wallet.guardians() == [DeviceKey(guardian)])
+    }
+
+    @Test func noGuardianBeforeTheFirstAction() async throws {
+        #expect(try await wallet(stateAccount: "null").guardians() == [])
     }
 
     @Test func stateOfAnotherKeyIsReplaced() async throws {

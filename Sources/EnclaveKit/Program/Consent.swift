@@ -39,9 +39,3 @@ extension Guardian {
         }
     }
 }
-
-extension CompressedP256Key {
-    var hex: String {
-        bytes.map { ($0 < 0x10 ? "0" : "") + String($0, radix: 16) }.joined()
-    }
-}

@@ -16,4 +16,8 @@ struct CompressedP256Key: Hashable, Sendable {
         }
         self.bytes = bytes
     }
+
+    /// How the consent sentence and the QR code write it: the user can
+    /// compare one with the other.
+    var hex: String { bytes.hex }
 }

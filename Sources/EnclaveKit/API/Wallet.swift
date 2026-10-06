@@ -9,18 +9,24 @@ import Foundation
 
 /// A smart wallet seen from one device: the device's key, which signs as
 /// the wallet's owner or as one of its guardians, the relayer that pays,
-/// the RPC that reads it.
+/// the RPC that reads it. The app sees its owner's side; `GuardedWallet`
+/// shows a guardian's.
 public struct Wallet: Sendable {
     public enum Status: Equatable, Sendable {
         /// No action yet. The address already receives; the first send
         /// creates the account, its rent part of that send's fee.
         case notOnChainYet
         /// `attested`: an App Attest receipt vouches that the key lives in
-        /// a genuine Secure Enclave.
-        case active(attested: Bool)
+        /// a genuine Secure Enclave. `recovery`: a guardian proposed to move
+        /// the wallet to another key. Not this user's doing? Cancel it before
+        /// it opens.
+        case active(attested: Bool, recovery: Recovery?)
         /// The wallet rotated to another key: this device can no longer sign.
         case keyReplaced
     }
+
+    /// The most guardians a wallet names.
+    public static let maxGuardians = EnclaveKit.maxGuardians
 
     /// 5 000 lamports per signature: the relayer's Ed25519 one and the
     /// secp256r1 one the precompile checks.
@@ -51,6 +57,14 @@ public struct Wallet: Sendable {
 
     var programId: PublicKey { cluster.programId }
 
+    /// For a guardian to keep, for a new device to recover: show it as a
+    /// QR code.
+    public var id: ID { ID(bytes: walletId) }
+
+    /// This device's key, for another wallet to name as guardian: show it as
+    /// a QR code.
+    public var deviceKey: DeviceKey { DeviceKey(signer.publicKey) }
+
     /// Where to send SOL to this wallet: the vault. Receives before the
     /// first action.
     public var address: PublicKey {
@@ -69,7 +83,15 @@ public struct Wallet: Sendable {
     public func status() async throws -> Status {
         guard let state = try await state() else { return .notOnChainYet }
         guard state.activeKey == signer.publicKey else { return .keyReplaced }
-        return .active(attested: state.attested)
+        return .active(attested: state.attested, recovery: recovery(in: state))
+    }
+
+    /// The devices that may start a recovery, none before the first action.
+    public func guardians() async throws -> [DeviceKey] {
+        try await state()?.guardians.compactMap { guardian in
+            guard case let .p256(key) = guardian else { return nil }
+            return DeviceKey(key)
+        } ?? []
     }
 
     /// `nil` until the first action creates the state. An account the
@@ -81,10 +103,30 @@ public struct Wallet: Sendable {
         return try SmartWallet(data: account.data)
     }
 
+    /// The proposal pending in `state`. `nil` once it lapsed: it no longer
+    /// blocks anything.
+    func recovery(in state: SmartWallet) -> Recovery? {
+        state.rotation.map { Recovery($0, cluster: cluster) }.flatMap { $0.closesAt > .now ? $0 : nil }
+    }
+
     /// A transfer for the user to approve. Reads the state and the balance,
     /// and refuses here, before any Face ID, what the vault cannot pay.
     public func prepareTransfer(_ amount: Lamports, to recipient: PublicKey) async throws -> ActionRequest {
         try await prepare(.transferSol(to: recipient, lamports: amount.value), spending: amount)
+    }
+
+    /// Replaces the whole list, and cancels any recovery in progress. At most
+    /// `maxGuardians`; an empty list removes them all.
+    public func prepareSetGuardians(_ guardians: [DeviceKey]) async throws -> ActionRequest {
+        precondition(guardians.count <= Self.maxGuardians, "a wallet names at most \(Self.maxGuardians) guardians")
+        let slots = guardians.map { Guardian.p256($0.key) } + Array(repeating: .none, count: Self.maxGuardians - guardians.count)
+        return try await prepare(.setGuardians(slots))
+    }
+
+    /// Stops the recovery a guardian started: the wallet stays with this
+    /// device. Possible until someone confirms it.
+    public func prepareCancelRecovery() async throws -> ActionRequest {
+        try await prepare(.cancelRotation)
     }
 
     /// The vault pays `amount`, the relayer's refund, and keeps its own rent:
@@ -144,11 +186,12 @@ public struct Wallet: Sendable {
 
     /// The active key signs every action. A guardian only proposes a new
     /// key. Before the first action there is no state: the key that made
-    /// the wallet creates it.
+    /// the wallet creates it, and there is no guardian yet.
     private func requireAuthority(over state: SmartWallet?, for action: Action) throws {
-        guard let state, state.activeKey != signer.publicKey else { return }
-        if case .proposeRotation = action, state.guardians.contains(.p256(signer.publicKey)) { return }
-        throw EnclaveKitError.keyReplaced
+        let key = signer.publicKey
+        if state.map({ $0.activeKey == key }) ?? (walletId == EnclaveKit.walletId(of: key)) { return }
+        guard case .proposeRotation = action else { throw EnclaveKitError.keyReplaced }
+        guard state?.guardians.contains(.p256(key)) == true else { throw EnclaveKitError.notAGuardian }
     }
 
     /// Kora signs as fee payer and sends, then the cluster confirms.

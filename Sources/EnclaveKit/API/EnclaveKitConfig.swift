@@ -40,6 +40,17 @@ public enum Cluster: Sendable {
         }
     }
 
+    /// `ROTATION_DELAY` of the program there: the time the owner has to
+    /// cancel a recovery. The devnet build waits a minute, not 72 hours.
+    var recoveryDelay: TimeInterval {
+        switch self {
+        case .devnet: 60
+        }
+    }
+
+    /// `ROTATION_WINDOW`: how long a recovery stays open to confirm.
+    static let recoveryWindow: TimeInterval = 7 * 24 * 60 * 60
+
     /// `path` on explorer.solana.com, e.g. `tx/<signature>`.
     func explorerURL(_ path: String) -> URL {
         switch self {

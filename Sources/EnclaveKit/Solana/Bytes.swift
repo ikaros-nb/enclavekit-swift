@@ -6,6 +6,18 @@
 //
 
 extension Array where Element == UInt8 {
+    /// Two lowercase hex digits per byte.
+    var hex: String {
+        map { ($0 < 0x10 ? "0" : "") + String($0, radix: 16) }.joined()
+    }
+
+    /// `nil` unless every character is a hex digit, two per byte.
+    init?(hex: String) {
+        let digits = hex.compactMap(\.hexDigitValue)
+        guard digits.count == hex.count, digits.count.isMultiple(of: 2) else { return nil }
+        self = stride(from: 0, to: digits.count, by: 2).map { UInt8(digits[$0] << 4 | digits[$0 + 1]) }
+    }
+
     mutating func appendLittleEndian<T: FixedWidthInteger>(_ value: T) {
         Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) }
     }

@@ -5,9 +5,28 @@
 //  Created by Nicolas Bouème on 29/09/2026.
 //
 
+import Foundation
+
+/// Text that is not what the app expected: a pasted address, a scanned
+/// QR code.
 public enum KeyError: Error, Equatable {
     case invalidLength(expected: Int, actual: Int)
     case invalidBase58
+    /// Not 66 hex digits for a point of P-256: see `DeviceKey`.
+    case notADeviceKey
+    /// Not `enclavekit:wallet:` and 32 bytes in base58: see `Wallet.ID`.
+    case notAWalletID
+}
+
+extension KeyError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case let .invalidLength(expected, actual): "Expected \(expected) bytes, found \(actual)."
+        case .invalidBase58: "This is not a Solana address."
+        case .notADeviceKey: "This is not an EnclaveKit device key."
+        case .notAWalletID: "This is not an EnclaveKit wallet."
+        }
+    }
 }
 
 /// A Solana address: 32 bytes, shown in base58.

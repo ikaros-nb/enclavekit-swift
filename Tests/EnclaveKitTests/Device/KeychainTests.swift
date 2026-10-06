@@ -31,6 +31,12 @@ final class KeychainTests {
         #expect(try Keychain.read(account) == Data([1]))
     }
 
+    @Test func setAddsThenReplaces() throws {
+        try Keychain.set(Data([1]), account: account)
+        try Keychain.set(Data([2]), account: account)
+        #expect(try Keychain.read(account) == Data([2]))
+    }
+
     @Test func deleteRemoves() throws {
         try Keychain.add(Data([1]), account: account)
         try Keychain.delete(account)

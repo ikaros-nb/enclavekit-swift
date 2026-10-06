@@ -38,6 +38,17 @@ enum Keychain {
         guard status == errSecSuccess else { throw Failure(status: status) }
     }
 
+    /// Writes over what `account` holds, or adds it: for the lists the SDK
+    /// keeps, never for the key.
+    static func set(_ data: Data, account: String) throws(Failure) {
+        let status = SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        switch status {
+        case errSecSuccess: return
+        case errSecItemNotFound: try add(data, account: account)
+        default: throw Failure(status: status)
+        }
+    }
+
     static func delete(_ account: String) throws(Failure) {
         let status = SecItemDelete(query(account) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw Failure(status: status) }

@@ -47,22 +47,31 @@ struct ActionRequestTests {
         }
     }
 
-    /// A guardian's device signs for someone else's wallet, a rotation
-    /// proposal only: it never spends.
-    @Test func guardianProposesButNeverSpends() async throws {
+    /// `GuardedWallet` only proposes a new key; the wallet underneath refuses
+    /// the rest too.
+    @Test func guardianNeverSpends() async throws {
         let guardian = SoftwareKey()
         let wallet = wallet(state: accountJSON(data: stateData(guardian: guardian.publicKey)), balance: 20_000_000, signer: guardian)
-        #expect(try await wallet.prepare(.proposeRotation(newKey: SoftwareKey().publicKey)).maxFee == 10_000)
-        await #expect(throws: EnclaveKitError.self) {
+        await #expect(throws: EnclaveKitError.keyReplaced) {
             try await wallet.prepareTransfer(10_000_000, to: Self.recipient)
         }
     }
 
-    @Test func strangerCannotPropose() async throws {
-        let wallet = wallet(state: accountJSON(data: stateData()), balance: 20_000_000, signer: SoftwareKey())
-        await #expect(throws: EnclaveKitError.self) {
-            try await wallet.prepare(.proposeRotation(newKey: SoftwareKey().publicKey))
+    /// The program takes exactly three slots: the guardian, then two `None`.
+    @Test func setGuardiansFillsTheSlots() async throws {
+        let guardian = SoftwareKey().publicKey
+        let kora = Self.relayer { params in
+            #expect(Self.transaction(params).firstRange(of: [1] + guardian.bytes + [0, 0]) != nil)
         }
+        let wallet = wallet(state: accountJSON(data: stateData()), balance: 20_000_000, kora: kora)
+        let request = try await wallet.prepareSetGuardians([DeviceKey(guardian)])
+        #expect(request.summary == "Set the guardians to \(DeviceKey(guardian))")
+        #expect(try await request.authorize() == Self.sent)
+    }
+
+    @Test func ownerCancelsTheRecovery() async throws {
+        let wallet = wallet(state: accountJSON(data: stateData()), balance: 20_000_000)
+        #expect(try await wallet.prepareCancelRecovery().summary == "Cancel the pending key rotation")
     }
 
     /// Nothing for the enclave to sign, so no Face ID: the transaction holds

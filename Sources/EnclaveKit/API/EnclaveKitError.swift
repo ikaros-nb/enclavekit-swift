@@ -25,8 +25,9 @@ public enum EnclaveKitError: Error, Equatable, Sendable {
     /// The guarded wallet does not name this device: its owner adds it with
     /// `prepareSetGuardians`.
     case notAGuardian
-    /// No guardian proposed this device's key for the wallet, or its owner
-    /// cancelled: a guardian scans this device's key first.
+    /// The wallet neither moved nor is moving to this device's key: no
+    /// guardian proposed it, or its owner cancelled. The device that signs
+    /// for the wallet, or a guardian, scans this device's key first.
     case noRecovery
     /// The recovery's delay is still running: the owner has until `opensAt`
     /// to cancel it.
@@ -86,7 +87,7 @@ extension EnclaveKitError: LocalizedError {
         case .notAGuardian:
             "This wallet does not name this device as guardian: its owner has to add it first."
         case .noRecovery:
-            "No guardian proposed this device's key for this wallet: let a guardian scan it first."
+            "This wallet is not moving to this device's key: the device that signs for it, or a guardian, scans this key first."
         case let .recoveryNotOpen(opensAt):
             "This recovery opens at \(opensAt.formatted(date: .abbreviated, time: .standard)): confirm it then."
         case .notOnChainYet:

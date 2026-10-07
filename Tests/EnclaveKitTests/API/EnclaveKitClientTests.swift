@@ -112,6 +112,23 @@ final class EnclaveKitClientTests {
         #expect(try client.wallet()?.id == Self.someWallet)
     }
 
+    /// Its own wallet, moved away then back: read again like any other.
+    @Test func walletMovedBackIsTakenOnAgain() async throws {
+        let own = try client.createWallet()
+        let back = try await online([own.id: stateData(activeKey: own.deviceKey.key)]).recoverWallet(own.id)
+        #expect(back.id == own.id)
+        #expect(try await back.status() == .active(recovery: nil))
+    }
+
+    /// Its own wallet, still with the key it moved to: nothing to take on.
+    @Test func walletMovedAwayIsNotTakenBack() async throws {
+        let own = try client.createWallet()
+        await #expect(throws: EnclaveKitError.noRecovery) {
+            try await online([own.id: stateData()]).recoverWallet(own.id)
+        }
+        #expect(try client.wallet()?.id == own.id)
+    }
+
     /// This device signs for its own wallet: taking on another would hide it.
     @Test func walletInUseIsKept() async throws {
         let own = try client.createWallet()

@@ -61,7 +61,14 @@ enum EnclaveKitProgram {
         case let .setGuardians(guardians):
             data = header(of: "set_guardians", preimage)
             data += guardians.flatMap(\.borsh)
-        case .transferToken, .sweepVault, .closeWallet:
+        case let .sweepVault(to):
+            // No amount: the program reads the vault's balance at execution.
+            data = header(of: "sweep_vault", preimage)
+            accounts.append(.writable(to))
+        case let .closeWallet(to):
+            data = header(of: "close_wallet", preimage)
+            accounts.append(.writable(to))
+        case .transferToken:
             throw .unsupported(preimage.action)
         }
 

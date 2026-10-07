@@ -106,6 +106,10 @@ struct ActionVector: Decodable, CustomTestStringConvertible {
             action = .cancelRotation
         case "set_guardians":
             action = .setGuardians(try f.decode([GuardianVector].self, forKey: .guardians).map(\.guardian))
+        case "sweep_vault":
+            action = .sweepVault(to: try PublicKey(bytes: f.decode(Hex.self, forKey: .to).bytes))
+        case "close_wallet":
+            action = .closeWallet(to: try PublicKey(bytes: f.decode(Hex.self, forKey: .to).bytes))
         default:
             // A new action in the vectors fails here until the SDK encodes it.
             throw DecodingError.dataCorruptedError(forKey: .name, in: c, debugDescription: "unknown action \(name)")

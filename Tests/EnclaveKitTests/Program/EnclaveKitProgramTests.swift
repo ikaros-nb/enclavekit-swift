@@ -61,10 +61,10 @@ struct EnclaveKitProgramTests {
     }
 
     @Test func actionsWithoutHandlerThrow() throws {
-        var sweep = preimage
-        sweep.action = .sweepVault(to: .systemProgram)
-        #expect(throws: EnclaveKitProgram.InstructionError.unsupported(sweep.action)) {
-            try EnclaveKitProgram.instruction(executing: sweep, relayer: .systemProgram, relayerFee: 0)
+        var transferToken = preimage
+        transferToken.action = .transferToken(mint: .systemProgram, to: .systemProgram, amount: 1)
+        #expect(throws: EnclaveKitProgram.InstructionError.unsupported(transferToken.action)) {
+            try EnclaveKitProgram.instruction(executing: transferToken, relayer: .systemProgram, relayerFee: 0)
         }
     }
 }

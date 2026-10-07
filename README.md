@@ -2,7 +2,7 @@
 
 Swift SDK of EnclaveKit, a Solana smart wallet whose key lives in the iPhone's Secure Enclave.
 
-The user approves each action as they unlock their iPhone: Face ID, Touch ID or the passcode. The key signs inside the Secure Enclave, the program checks the signature through the `secp256r1` precompile, and a Kora relayer pays the fee, refunded from the wallet. Guardians, the user's other Apple devices, can move the wallet to a new key after a timelock.
+The user approves each action as they unlock their iPhone: Face ID, Touch ID or the passcode. The key signs inside the Secure Enclave, the program checks the signature through the `secp256r1` precompile, and a Kora relayer pays the fee, refunded from the wallet. The iPhone that signs can move the wallet to another one at once. Guardians, the user's other Apple devices, can move it to a new key after a timelock, when that iPhone is lost.
 
 - The program and the relayer config: [enclavekit-anchor](https://github.com/ikaros-nb/enclavekit-anchor).
 - The demo app: `enclavekit-demo-ios`, next to this repository.
@@ -11,11 +11,12 @@ Devnet only, not audited.
 
 ## Recovery in v1: read this first
 
-- **The key never leaves the Secure Enclave.** No export, no iCloud backup. It survives a reinstall of the app, not the loss, reset or replacement of the iPhone.
+- **The key never leaves the Secure Enclave.** No export, no iCloud backup. It survives a reinstall of the app, not the loss, reset or replacement of the iPhone. To change iPhones, move the wallet before resetting the old one: see [Moving to another iPhone](#moving-to-another-iphone).
 - **A guardian is the only way back.** In v1, a guardian is another Apple device running an EnclaveKit app: the owner scans its device key, and a wallet names up to 3. Without a guardian, a lost iPhone is a lost wallet. Tell your users at enrollment, before they fund it.
 - **A guardian is trusted.** A guardian alone can start a recovery, toward any key. The owner's iPhone can cancel it during the delay: 72 hours, one minute on devnet. Past it, anyone can confirm, and the wallet moves for good. An owner away from their iPhone for three days can lose the wallet to a dishonest guardian.
 - **A guardian has to remember the wallet.** It keeps the wallet's ID in its own Keychain, scanned once from the owner. A guardian that forgets the wallet, or deletes its key, can no longer start a recovery: name more than one.
 - **One key per device, for both roles.** The device key signs for the device's own wallet and as guardian of others. Deleting it, or closing its wallet, ends both.
+- **One wallet per device at a time.** A device that signs for a wallet cannot take on another: `recoverWallet` throws `walletExists`.
 
 Passkey guardians, and recovery from Android or the web, come in v2.
 
@@ -69,9 +70,12 @@ receipt.explorerURL
 | `wallet.prepareTransferAll(to:)` | `sweep_vault` | Everything, the fee aside, read on-chain as it executes. The wallet stays. |
 | `wallet.prepareSetGuardians(_:)` | `set_guardians` | The whole list, up to `Wallet.maxGuardians`. Cancels a pending recovery. |
 | `wallet.prepareCancelRecovery()` | `cancel_rotation` | From the owner's iPhone, until someone confirms the recovery. |
+| `wallet.prepareMove(to:)` | `propose_rotation` | From the iPhone that signs: to another device's key, at once. Ends a recovery in progress. |
 | `wallet.prepareClose(to:)` | `close_wallet` | Everything out, the account closed, then the device key deleted. |
-| `guarded.prepareRecovery(to:)` | `propose_rotation` | From a guardian: moves the wallet to the new device's key. |
+| `guarded.prepareRecovery(to:)` | `propose_rotation` | From a guardian: proposes the new device's key, behind the delay. |
 | `wallet.confirmRecovery()` | `confirm_rotation` | From the new device, once the delay is over. No signature, no prompt. |
+
+Each transaction carries the program's event for its action: see [Events](https://github.com/ikaros-nb/enclavekit-anchor#events) in enclavekit-anchor.
 
 ## Guardians and recovery
 
@@ -100,9 +104,34 @@ try await recovered.status()                // .recovering(recovery), recovery.o
 _ = try await recovered.confirmRecovery()
 ```
 
-- `recoverWallet` checks on-chain that a guardian proposed this device's key, so nothing waits in local state. From then on, `wallet()` returns the recovered wallet.
+- `recoverWallet` checks on-chain that a guardian proposed this device's key, or that the wallet moved to it, so nothing waits in local state. From then on, `wallet()` returns the recovered wallet.
 - During the delay, the owner's iPhone, if it still has its key, sees `.active(recovery:)` with the recovery, and can cancel.
 - A guardian lists its wallets with `guardedWallets()`. Each `status()` is `.guarding(recovery:)` or `.notGuarding`: not named yet, no longer named, or closed. `forgetWallet(_:)` takes one off the list. On-chain, the wallet still names the device until its owner changes its guardians.
+
+## Moving to another iPhone
+
+While the old iPhone still has its key, it moves the wallet itself: no guardian, no delay. The same two QR codes go each way.
+
+```swift
+// New iPhone: show its key to the old one.
+let newWallet = try enclaveKit.wallet() ?? enclaveKit.createWallet()
+newWallet.deviceKey.description
+
+// Old iPhone: move the wallet, then show its ID.
+_ = try await wallet.prepareMove(to: try DeviceKey(scanned)).authorize()
+try await wallet.status()                   // .keyReplaced
+wallet.id.description
+
+// New iPhone: take the wallet on. It signs from now on.
+let moved = try await enclaveKit.recoverWallet(try Wallet.ID(scanned))
+try await moved.status()                    // .active(recovery: nil)
+```
+
+- The move takes effect once the transaction confirms. The address, the funds and the guardians stay. A recovery in progress ends.
+- `prepareMove(to:)` throws `notOnChainYet` before the wallet's first action: it has no key on-chain to move. It throws `keyInUse` for this device's own key or a guardian's: remove that guardian first.
+- The new iPhone must not already sign for a wallet: `recoverWallet` throws `walletExists`. A wallet of its own that never acted is fine.
+- A wallet comes back the same way, to the device that made it too: that device scans the ID again, and `recoverWallet` checks the chain.
+- `wallet()` returns the last wallet the device took on, even once that wallet moved away again: `.keyReplaced`. The device key still guards, and can take on another wallet.
 
 ## Starting over
 
@@ -123,9 +152,14 @@ _ = try await recovered.confirmRecovery()
 | `rejected(reason:)` | Kora refused the transaction, its simulation failed for instance: nothing was sent. |
 | `failed(_:reason:)`, `notConfirmed(_:)` | The transaction reached the network: `receipt` gives its explorer page. |
 | `keyReplaced` | The wallet moved to another key: this device no longer signs for it. |
-| `notAGuardian`, `noRecovery`, `recoveryNotOpen(opensAt:)` | Recovery called out of turn. |
+| `notAGuardian` | The guarded wallet does not name this device. |
+| `noRecovery` | The wallet neither moved nor is moving to this device's key: the device that signs for it, or a guardian, scans this key first. |
+| `recoveryNotOpen(opensAt:)` | The recovery's delay is still running. |
+| `notOnChainYet`, `keyInUse` | See [Moving to another iPhone](#moving-to-another-iphone). |
+| `tooManyGuardians` | `prepareSetGuardians` got more than `Wallet.maxGuardians` keys. |
 | `tokensLeft`, `nothingToClose` | See [Starting over](#starting-over). |
-| `walletExists`, `noWallet`, `secureEnclaveUnavailable` | The device key is already there, not yet there, or cannot exist here. |
+| `walletExists` | `createWallet()` found a device key, or `recoverWallet` found this device signing for another wallet. |
+| `noWallet`, `secureEnclaveUnavailable` | No device key yet, or none possible here. |
 
 ## Layout
 

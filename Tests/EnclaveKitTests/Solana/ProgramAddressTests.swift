@@ -23,7 +23,16 @@ struct ProgramAddressTests {
         #expect(vault.bump == vector.vault.bump)
     }
 
-    /// Both vector PDAs have bump 255: this is what exercises the on-curve branch.
+    /// Bump 252: 255 to 253 land on the curve, so the search goes on past them.
+    @Test func eventAuthorityPDA() throws {
+        let programId = try PublicKey(base58: vector.programId)
+        let eventAuthority = try #require(PublicKey.findProgramAddress(seeds: [Seeds.eventAuthority], programId: programId))
+        #expect(eventAuthority.address.base58 == vector.eventAuthority.address)
+        #expect(eventAuthority.bump == vector.eventAuthority.bump)
+        #expect(EnclaveKitProgram.eventAuthorityAddress() == eventAuthority.address)
+    }
+
+    /// Wallet and vault have bump 255: this is what exercises the on-curve branch.
     @Test func ed25519PublicKeysAreOnTheCurve() {
         for _ in 0..<64 {
             let key = Curve25519.Signing.PrivateKey().publicKey
@@ -32,7 +41,7 @@ struct ProgramAddressTests {
     }
 
     @Test func pdasAreOffTheCurve() throws {
-        for address in [vector.wallet.address, vector.vault.address] {
+        for address in [vector.wallet.address, vector.vault.address, vector.eventAuthority.address] {
             #expect(!Ed25519.isOnCurve(try PublicKey(base58: address).bytes))
         }
     }

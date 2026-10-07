@@ -10,6 +10,8 @@ import CryptoKit
 enum Seeds {
     static let wallet = Array("wallet".utf8)
     static let vault = Array("vault".utf8)
+    /// Anchor's, for `emit_cpi!`: the program signs each event with it.
+    static let eventAuthority = Array("__event_authority".utf8)
 }
 
 let maxGuardians = 3

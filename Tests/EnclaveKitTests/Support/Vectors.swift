@@ -49,6 +49,7 @@ struct KeyVector: Decodable {
     let programId: String
     let wallet: PDAVector
     let vault: PDAVector
+    let eventAuthority: PDAVector
 }
 
 struct ActionsVector: Decodable {

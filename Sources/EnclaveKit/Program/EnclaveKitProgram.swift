@@ -23,12 +23,23 @@ enum EnclaveKitProgram {
 
     /// State account of the wallet.
     static func walletAddress(walletId: [UInt8], programId: PublicKey = id) -> PublicKey {
-        address(seed: Seeds.wallet, walletId: walletId, programId: programId)
+        address(seeds: [Seeds.wallet, walletId], programId: programId)
     }
 
     /// System account holding the wallet's lamports.
     static func vaultAddress(walletId: [UInt8], programId: PublicKey = id) -> PublicKey {
-        address(seed: Seeds.vault, walletId: walletId, programId: programId)
+        address(seeds: [Seeds.vault, walletId], programId: programId)
+    }
+
+    /// Signer of the self-CPI that carries each event. One per program.
+    static func eventAuthorityAddress(programId: PublicKey = id) -> PublicKey {
+        address(seeds: [Seeds.eventAuthority], programId: programId)
+    }
+
+    /// What `#[event_cpi]` appends to every instruction's accounts: the
+    /// event authority, then the program, which calls itself to log.
+    static func eventAccounts(programId: PublicKey) -> [AccountMeta] {
+        [.readonly(eventAuthorityAddress(programId: programId)), .readonly(programId)]
     }
 
     /// The instruction that executes `preimage.action`. It goes right after the
@@ -41,7 +52,8 @@ enum EnclaveKitProgram {
         relayerFee: UInt64
     ) throws(InstructionError) -> Instruction {
         // Accounts in the order of `#[derive(Accounts)]`: wallet, vault, the
-        // action's own, then relayer, Instructions sysvar, System.
+        // action's own, then relayer, Instructions sysvar, System, and the
+        // event accounts.
         var accounts: [AccountMeta] = [
             .writable(walletAddress(walletId: preimage.walletId, programId: preimage.programId)),
             .writable(vaultAddress(walletId: preimage.walletId, programId: preimage.programId)),
@@ -76,6 +88,7 @@ enum EnclaveKitProgram {
         // program pays back at most the signed ceiling.
         data.appendLittleEndian(relayerFee)
         accounts += [.writableSigner(relayer), .readonly(.instructionsSysvar), .readonly(.systemProgram)]
+        accounts += eventAccounts(programId: preimage.programId)
         return Instruction(programId: preimage.programId, accounts: accounts, data: data)
     }
 
@@ -85,7 +98,8 @@ enum EnclaveKitProgram {
     static func confirmRotation(walletId: [UInt8], programId: PublicKey = id) -> Instruction {
         Instruction(
             programId: programId,
-            accounts: [.writable(walletAddress(walletId: walletId, programId: programId))],
+            accounts: [.writable(walletAddress(walletId: walletId, programId: programId))]
+                + eventAccounts(programId: programId),
             data: discriminator(of: "confirm_rotation") + walletId
         )
     }
@@ -106,9 +120,9 @@ enum EnclaveKitProgram {
         return data
     }
 
-    private static func address(seed: [UInt8], walletId: [UInt8], programId: PublicKey) -> PublicKey {
+    private static func address(seeds: [[UInt8]], programId: PublicKey) -> PublicKey {
         // No bump in 255...1 gives an off-curve address with probability 2^-255.
-        PublicKey.findProgramAddress(seeds: [seed, walletId], programId: programId)!.address
+        PublicKey.findProgramAddress(seeds: seeds, programId: programId)!.address
     }
 }
 

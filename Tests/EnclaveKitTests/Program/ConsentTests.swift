@@ -28,4 +28,9 @@ struct ConsentTests {
     func phrase(_ action: Action, _ phrase: String) {
         #expect(action.consentPhrase == phrase)
     }
+
+    /// `proposeRotation` again, signed by the wallet's own key: no delay.
+    @Test func movePhraseSaysNow() {
+        #expect(Action.movePhrase(to: Self.key) == "Move this wallet to the key \(Self.hex) now: this device stops signing for it")
+    }
 }

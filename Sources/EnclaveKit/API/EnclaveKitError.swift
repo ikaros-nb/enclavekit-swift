@@ -31,6 +31,15 @@ public enum EnclaveKitError: Error, Equatable, Sendable {
     /// The recovery's delay is still running: the owner has until `opensAt`
     /// to cancel it.
     case recoveryNotOpen(opensAt: Date)
+    /// The wallet never acted: it has no account yet, so no key to move.
+    /// Any first action makes it.
+    case notOnChainYet
+    /// The wallet already names the key `prepareMove(to:)` got: this
+    /// device's own, or a guardian's. Moved there, the wallet would lose
+    /// that guardian: its owner removes it first.
+    case keyInUse
+    /// `prepareSetGuardians` got more keys than `Wallet.maxGuardians`.
+    case tooManyGuardians
     /// The vault cannot pay the amount, the fee and keep its own rent:
     /// `available` is the most it can send.
     case insufficientFunds(available: Lamports)
@@ -57,7 +66,8 @@ public enum EnclaveKitError: Error, Equatable, Sendable {
         switch self {
         case let .failed(receipt, _), let .notConfirmed(receipt): receipt
         case .walletExists, .noWallet, .secureEnclaveUnavailable, .keyReplaced, .notAGuardian, .noRecovery, .recoveryNotOpen,
-             .insufficientFunds, .tokensLeft, .nothingToClose, .cancelled, .rejected: nil
+             .notOnChainYet, .keyInUse, .tooManyGuardians, .insufficientFunds, .tokensLeft, .nothingToClose, .cancelled,
+             .rejected: nil
         }
     }
 }
@@ -79,6 +89,12 @@ extension EnclaveKitError: LocalizedError {
             "No guardian proposed this device's key for this wallet: let a guardian scan it first."
         case let .recoveryNotOpen(opensAt):
             "This recovery opens at \(opensAt.formatted(date: .abbreviated, time: .standard)): confirm it then."
+        case .notOnChainYet:
+            "This wallet was never used: it can move to another key after its first action."
+        case .keyInUse:
+            "This wallet already names this key, as its own or as a guardian: move it to a key it does not name yet."
+        case .tooManyGuardians:
+            "A wallet names at most \(Wallet.maxGuardians) guardians."
         case let .insufficientFunds(available):
             "This wallet can send at most \(available): it keeps enough for the fee and its own rent."
         case .tokensLeft:

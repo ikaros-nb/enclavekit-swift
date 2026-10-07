@@ -55,11 +55,12 @@ public struct EnclaveKitClient: Sendable {
     }
 
     /// Takes on the wallet `id`, scanned on a guardian's screen once the
-    /// guardian proposed this device's `deviceKey`. Kept in the Keychain next
-    /// to the key: from now on `wallet()` returns it, `recovering` until
-    /// `confirmRecovery()` after the delay. Throws `noRecovery` if no
-    /// guardian proposed this device's key for `id`, `walletExists` while
-    /// this device signs for its own.
+    /// guardian proposed this device's `deviceKey`, or on the old device's
+    /// once it moved the wallet here. Kept in the Keychain next to the key:
+    /// from now on `wallet()` returns it, `recovering` until
+    /// `confirmRecovery()` after the delay, `active` at once after a move.
+    /// Throws `noRecovery` if the wallet neither moved nor is moving to this
+    /// device's key, `walletExists` while this device signs for its own.
     public func recoverWallet(_ id: Wallet.ID) async throws -> Wallet {
         guard let key = try SecureEnclaveKey.load(account: account) else { throw EnclaveKitError.noWallet }
         let current = wallet(of: key, id: try recoveredID())

@@ -84,7 +84,7 @@ struct LiveRecoveryTests {
 
         try await Task.sleep(for: .seconds(max(0, second.opensAt.timeIntervalSinceNow)))
         print(try await newDevice.confirmRecovery().explorerURL)
-        #expect(try await newDevice.status() == .active(attested: false, recovery: nil))
+        #expect(try await newDevice.status() == .active(recovery: nil))
         #expect(try await owner.status() == .keyReplaced)
         // The guardian still guards the wallet on its new key.
         #expect(try await guardian.status() == .guarding(recovery: nil))
@@ -99,7 +99,7 @@ struct LiveRecoveryTests {
 
     /// The recovery the owner sees pending, if any.
     private func recovery(seenBy owner: Wallet) async throws -> Recovery? {
-        guard case let .active(_, recovery) = try await owner.status() else { return nil }
+        guard case let .active(recovery) = try await owner.status() else { return nil }
         return recovery
     }
 }

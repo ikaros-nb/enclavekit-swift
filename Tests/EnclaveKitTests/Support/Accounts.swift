@@ -27,19 +27,17 @@ func tokenAccountJSON(owner: PublicKey, amount: UInt64, program: PublicKey) -> S
     return #"{"pubkey":"\#(address)","account":\#(accountJSON(owner: program.base58, data: data))}"#
 }
 
-/// The devnet account of `SmartWalletTests` (nonce 1), moved to the wallet
-/// of `SoftwareKey.test`, with `activeKey`, `attested` and `rotation` as
+/// The devnet account of `SmartWalletTests` (nonce 1, not attested), moved
+/// to the wallet of `SoftwareKey.test`, with `activeKey` and `rotation` as
 /// given, and `guardian` in the first slot.
 func stateData(
     activeKey: CompressedP256Key = SoftwareKey.test.publicKey,
-    attested: Bool = false,
     guardian: CompressedP256Key? = nil,
     rotation: SmartWallet.PendingRotation? = nil
 ) -> [UInt8] {
     let devnet = SmartWalletTests.devnetAccount
     var data = Array(devnet.prefix(82)) // up to `attested`
     data.replaceSubrange(8..<73, with: walletId(of: SoftwareKey.test.publicKey) + activeKey.bytes)
-    data[81] = attested ? 1 : 0
     if let rotation {
         data += [1] + rotation.newKey.bytes
         data.appendLittleEndian(rotation.proposedAt)

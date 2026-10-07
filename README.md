@@ -101,7 +101,7 @@ _ = try await recovered.confirmRecovery()
 ```
 
 - `recoverWallet` checks on-chain that a guardian proposed this device's key, so nothing waits in local state. From then on, `wallet()` returns the recovered wallet.
-- During the delay, the owner's iPhone, if it still has its key, sees `.active(attested:recovery:)` with the recovery, and can cancel.
+- During the delay, the owner's iPhone, if it still has its key, sees `.active(recovery:)` with the recovery, and can cancel.
 - A guardian lists its wallets with `guardedWallets()`. Each `status()` is `.guarding(recovery:)` or `.notGuarding`: not named yet, no longer named, or closed. `forgetWallet(_:)` takes one off the list. On-chain, the wallet still names the device until its owner changes its guardians.
 
 ## Starting over

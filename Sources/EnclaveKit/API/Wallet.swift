@@ -16,11 +16,10 @@ public struct Wallet: Sendable {
         /// No action yet. The address already receives; the first send
         /// creates the account, its rent part of that send's fee.
         case notOnChainYet
-        /// `attested`: an App Attest receipt vouches that the key lives in
-        /// a genuine Secure Enclave. `recovery`: a guardian proposed to move
-        /// the wallet to another key. Not this user's doing? Cancel it before
-        /// it opens.
-        case active(attested: Bool, recovery: Recovery?)
+        /// This device signs for the wallet. `recovery`: a guardian proposed
+        /// to move the wallet to another key. Not this user's doing? Cancel
+        /// it before it opens.
+        case active(recovery: Recovery?)
         /// A guardian proposed this device's key: from `recovery.opensAt`,
         /// `confirmRecovery()` moves the wallet here. Until it does, the
         /// owner can still cancel.
@@ -99,7 +98,7 @@ public struct Wallet: Sendable {
     public func status() async throws -> Status {
         guard let state = try await state() else { return .notOnChainYet }
         let recovery = recovery(in: state)
-        if state.activeKey == signer.publicKey { return .active(attested: state.attested, recovery: recovery) }
+        if state.activeKey == signer.publicKey { return .active(recovery: recovery) }
         if let recovery, recovery.newKey == deviceKey { return .recovering(recovery) }
         return .keyReplaced
     }
@@ -134,9 +133,9 @@ public struct Wallet: Sendable {
     }
 
     /// Replaces the whole list, and cancels any recovery in progress. At most
-    /// `maxGuardians`; an empty list removes them all.
+    /// `maxGuardians`, or `tooManyGuardians`; an empty list removes them all.
     public func prepareSetGuardians(_ guardians: [DeviceKey]) async throws -> ActionRequest {
-        precondition(guardians.count <= Self.maxGuardians, "a wallet names at most \(Self.maxGuardians) guardians")
+        guard guardians.count <= Self.maxGuardians else { throw EnclaveKitError.tooManyGuardians }
         let slots = guardians.map { Guardian.p256($0.key) } + Array(repeating: .none, count: Self.maxGuardians - guardians.count)
         return try await prepare(.setGuardians(slots))
     }
@@ -145,6 +144,23 @@ public struct Wallet: Sendable {
     /// device. Possible until someone confirms it.
     public func prepareCancelRecovery() async throws -> ActionRequest {
         try await prepare(.cancelRotation)
+    }
+
+    /// Moves the wallet to `newKey`, the key another device shows, as soon
+    /// as the transaction confirms: this device still holds the wallet's key,
+    /// so no delay, no guardian. From then on this device's status is
+    /// `keyReplaced`; the other device takes the wallet on with
+    /// `recoverWallet(id)`. Ends any recovery in progress. Throws
+    /// `notOnChainYet` before the first action, `keyInUse` if the wallet
+    /// already names `newKey`: this device's own, or a guardian's.
+    public func prepareMove(to newKey: DeviceKey) async throws -> ActionRequest {
+        guard let state = try await state() else { throw EnclaveKitError.notOnChainYet }
+        // A guardian signing the same action only proposes: not a move.
+        guard state.activeKey == signer.publicKey else { throw EnclaveKitError.keyReplaced }
+        guard newKey.key != state.activeKey, !state.guardians.contains(.p256(newKey.key)) else {
+            throw EnclaveKitError.keyInUse
+        }
+        return try await prepare(.proposeRotation(newKey: newKey.key), over: state, summary: Action.movePhrase(to: newKey.key))
     }
 
     /// Everything the vault holds, the relayer's refund aside, to
@@ -188,7 +204,17 @@ public struct Wallet: Sendable {
     /// the program refuses less. Only `sweep_vault` and `close_wallet` empty
     /// it.
     func prepare(_ action: Action, spending amount: Lamports = 0) async throws -> ActionRequest {
-        let state = try await state()
+        try await prepare(action, over: try await state(), spending: amount)
+    }
+
+    /// Same, with the state already read. `summary`: another sentence than
+    /// the action's own.
+    private func prepare(
+        _ action: Action,
+        over state: SmartWallet?,
+        spending amount: Lamports = 0,
+        summary: String? = nil
+    ) async throws -> ActionRequest {
         try requireAuthority(over: state, for: action)
         let maxFee = try await relayerFee(state)
         let reserved = maxFee + (try await rpc.minimumBalanceForRentExemption(space: 0))
@@ -196,7 +222,7 @@ public struct Wallet: Sendable {
         guard balance >= reserved, amount.value <= balance - reserved else {
             throw EnclaveKitError.insufficientFunds(available: Lamports(balance > reserved ? balance - reserved : 0))
         }
-        return ActionRequest(maxFee: Lamports(maxFee), action: action, wallet: self)
+        return ActionRequest(maxFee: Lamports(maxFee), action: action, wallet: self, summary: summary)
     }
 
     /// Signs `action` with the enclave, has Kora send it, returns once

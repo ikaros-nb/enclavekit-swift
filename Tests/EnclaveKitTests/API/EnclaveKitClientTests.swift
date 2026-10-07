@@ -11,8 +11,10 @@ import Testing
 @testable import EnclaveKit
 
 /// The Mac's Secure Enclave with the app's flags, `.userPresence` included:
-/// making and loading a key ask for nothing, only signing would.
-@Suite(.enabled(if: SecureEnclave.isAvailable))
+/// making and loading a key ask for nothing, only signing would. One test at
+/// a time: a dozen keys made at once leave the enclave's daemon silent, and
+/// the whole run hangs.
+@Suite(.serialized, .enabled(if: SecureEnclave.isAvailable))
 final class EnclaveKitClientTests {
     let client = EnclaveKitClient(
         config: EnclaveKitConfig(relayerURL: URL(string: "http://kora.invalid")!),
@@ -100,6 +102,14 @@ final class EnclaveKitClientTests {
         let found = try #require(try client.wallet())
         #expect(found.id == Self.someWallet)
         #expect(found.deviceKey == own.deviceKey)
+    }
+
+    /// The old device moved the wallet here: no delay, it signs at once.
+    @Test func movedWalletIsTakenOn() async throws {
+        let own = try client.createWallet()
+        let moved = try await online([Self.someWallet: stateData(activeKey: own.deviceKey.key)]).recoverWallet(Self.someWallet)
+        #expect(try await moved.status() == .active(recovery: nil))
+        #expect(try client.wallet()?.id == Self.someWallet)
     }
 
     /// This device signs for its own wallet: taking on another would hide it.

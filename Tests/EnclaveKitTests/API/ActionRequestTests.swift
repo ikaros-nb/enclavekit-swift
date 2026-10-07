@@ -84,6 +84,14 @@ struct ActionRequestTests {
         #expect(try await request.authorize() == Self.sent)
     }
 
+    /// Typed in by the user: an error to show, never a crash.
+    @Test func tooManyGuardiansThrows() async {
+        let guardians = (0...Wallet.maxGuardians).map { _ in DeviceKey(SoftwareKey().publicKey) }
+        await #expect(throws: EnclaveKitError.tooManyGuardians) {
+            try await wallet(state: accountJSON(data: stateData()), balance: 20_000_000).prepareSetGuardians(guardians)
+        }
+    }
+
     @Test func ownerCancelsTheRecovery() async throws {
         let wallet = wallet(state: accountJSON(data: stateData()), balance: 20_000_000)
         #expect(try await wallet.prepareCancelRecovery().summary == "Cancel the pending key rotation")

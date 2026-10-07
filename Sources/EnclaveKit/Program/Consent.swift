@@ -28,6 +28,12 @@ extension Action {
             "Close this wallet and send everything to \(to)"
         }
     }
+
+    /// `proposeRotation` signed by the wallet's own key: the program swaps
+    /// the key at once, with no delay left to cancel in.
+    static func movePhrase(to newKey: CompressedP256Key) -> String {
+        "Move this wallet to the key \(newKey.hex) now: this device stops signing for it"
+    }
 }
 
 extension Guardian {

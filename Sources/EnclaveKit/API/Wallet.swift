@@ -47,15 +47,26 @@ public struct Wallet: Sendable {
     /// A rotation never changes it.
     let walletId: [UInt8]
     let cluster: Cluster
+    /// What a confirmed close runs: the client's `deleteDeviceKey()`.
+    /// Nothing for a key the Keychain does not hold.
+    let deleteKey: @Sendable () throws -> Void
     private let rpc: SolanaRPC
     private let kora: Kora
 
     /// `walletId` defaults to the wallet `signer` made. Another one when the
     /// device recovered a wallet, or guards it.
-    init(signer: any Signer, walletId: [UInt8]? = nil, kora: Kora, rpc: SolanaRPC = SolanaRPC(), cluster: Cluster = .devnet) {
+    init(
+        signer: any Signer,
+        walletId: [UInt8]? = nil,
+        kora: Kora,
+        rpc: SolanaRPC = SolanaRPC(),
+        cluster: Cluster = .devnet,
+        deleteKey: @escaping @Sendable () throws -> Void = {}
+    ) {
         self.signer = signer
         self.walletId = walletId ?? EnclaveKit.walletId(of: signer.publicKey)
         self.cluster = cluster
+        self.deleteKey = deleteKey
         self.rpc = rpc
         self.kora = kora
     }
@@ -136,9 +147,46 @@ public struct Wallet: Sendable {
         try await prepare(.cancelRotation)
     }
 
+    /// Everything the vault holds, the relayer's refund aside, to
+    /// `recipient`: the program reads the amount as it executes, so the
+    /// summary names none. The wallet stays, guardians included, and its
+    /// address receives again.
+    public func prepareTransferAll(to recipient: PublicKey) async throws -> ActionRequest {
+        let action = Action.sweepVault(to: recipient)
+        let state = try await state()
+        try requireAuthority(over: state, for: action)
+        guard let maxFee = try await sweepFee(state) else { throw EnclaveKitError.insufficientFunds(available: 0) }
+        return ActionRequest(maxFee: maxFee, action: action, wallet: self)
+    }
+
+    /// Sends everything the vault holds to `destination` and closes the
+    /// wallet's account, then deletes this device's key once confirmed:
+    /// nothing signs for this address again. As with `deleteDeviceKey()`,
+    /// the wallets this device guards lose it as guardian. Throws
+    /// `tokensLeft` while a token account of the vault holds a balance.
+    /// A wallet that never acted has no account to close: its vault is
+    /// emptied, then the key goes all the same; `nothingToClose` when it
+    /// holds no more than the fee.
+    public func prepareClose(to destination: PublicKey) async throws -> ActionRequest {
+        let state = try await state()
+        let action: Action = state == nil ? .sweepVault(to: destination) : .closeWallet(to: destination)
+        try requireAuthority(over: state, for: action)
+        try await requireNoTokens()
+        let maxFee: Lamports
+        if state == nil {
+            guard let sweepFee = try await sweepFee(state) else { throw EnclaveKitError.nothingToClose }
+            maxFee = sweepFee
+        } else {
+            // The program caps the refund at the balance: an emptied vault
+            // closes too.
+            maxFee = Lamports(try await relayerFee(state))
+        }
+        return ActionRequest(maxFee: maxFee, action: action, wallet: self, afterConfirmation: deleteKey)
+    }
+
     /// The vault pays `amount`, the relayer's refund, and keeps its own rent:
-    /// below it the runtime rejects the transaction, and only `sweep_vault`
-    /// may empty it.
+    /// the program refuses less. Only `sweep_vault` and `close_wallet` empty
+    /// it.
     func prepare(_ action: Action, spending amount: Lamports = 0) async throws -> ActionRequest {
         let state = try await state()
         try requireAuthority(over: state, for: action)
@@ -222,6 +270,22 @@ public struct Wallet: Sendable {
         if state.map({ $0.activeKey == key }) ?? (walletId == EnclaveKit.walletId(of: key)) { return }
         guard case .proposeRotation = action else { throw EnclaveKitError.keyReplaced }
         guard state?.guardians.contains(.p256(key)) == true else { throw EnclaveKitError.notAGuardian }
+    }
+
+    /// The relayer's refund for emptying the vault, `nil` when it would
+    /// leave nothing to send. The program refuses a refund the balance
+    /// cannot cover.
+    private func sweepFee(_ state: SmartWallet?) async throws -> Lamports? {
+        let maxFee = try await relayerFee(state)
+        return try await rpc.balance(address) > maxFee ? Lamports(maxFee) : nil
+    }
+
+    /// The program cannot list the vault's token accounts: the SDK reads
+    /// them before the key goes.
+    private func requireNoTokens() async throws {
+        guard try await rpc.tokenAmounts(owner: address).allSatisfy({ $0 == 0 }) else {
+            throw EnclaveKitError.tokensLeft
+        }
     }
 
     /// Kora signs as fee payer and sends, then the cluster confirms.

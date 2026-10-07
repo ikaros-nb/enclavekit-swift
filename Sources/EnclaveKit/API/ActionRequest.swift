@@ -20,6 +20,8 @@ public struct ActionRequest: Identifiable, Sendable {
     public let maxFee: Lamports
     let action: Action
     let wallet: Wallet
+    /// Runs once the cluster confirmed: closing the wallet deletes the key.
+    var afterConfirmation: @Sendable () throws -> Void = {}
 
     /// What the user approves, addresses in full.
     public var summary: String { action.consentPhrase }
@@ -28,7 +30,9 @@ public struct ActionRequest: Identifiable, Sendable {
     /// another authorization is in flight, then reads the nonce it left.
     public func authorize() async throws -> Receipt {
         try await Self.queue.run {
-            try await wallet.execute(action, maxRelayerFee: maxFee.value)
+            let receipt = try await wallet.execute(action, maxRelayerFee: maxFee.value)
+            try afterConfirmation()
+            return receipt
         }
     }
 }

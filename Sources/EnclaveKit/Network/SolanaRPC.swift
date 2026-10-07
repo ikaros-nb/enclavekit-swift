@@ -11,6 +11,12 @@ import Foundation
 struct SolanaRPC: Sendable {
     static let devnet = URL(string: "https://api.devnet.solana.com")!
 
+    /// SPL Token, then Token-2022: every token account belongs to one of them.
+    static let tokenPrograms = [
+        try! PublicKey(base58: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+        try! PublicKey(base58: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"),
+    ]
+
     private let client: JSONRPCClient
 
     init(url: URL = devnet, transport: @escaping HTTPTransport = { try await URLSession.shared.data(for: $0) }) {
@@ -46,6 +52,25 @@ struct SolanaRPC: Sendable {
         return reply.value.first ?? nil
     }
 
+    /// The amount in each token account `owner` holds, under both token
+    /// programs, empty ones included.
+    func tokenAmounts(owner: PublicKey) async throws -> [UInt64] {
+        var amounts: [UInt64] = []
+        for program in Self.tokenPrograms {
+            let reply: WithContext<[KeyedAccount]> = try await client.call(
+                "getTokenAccountsByOwner",
+                Positional(owner.base58, ["programId": program.base58], Config(encoding: "base64"))
+            )
+            amounts += try reply.value.map { try $0.account.tokenAmount }
+        }
+        return amounts
+    }
+
+    /// `{ "pubkey": …, "account": … }`
+    private struct KeyedAccount: Decodable {
+        let account: AccountInfo
+    }
+
     private struct Config: Encodable {
         var commitment = "confirmed"
         var encoding: String?
@@ -61,6 +86,15 @@ struct AccountInfo: Equatable, Sendable {
     let lamports: UInt64
     let owner: PublicKey
     let data: [UInt8]
+
+    /// A token account's amount: Token-2022 keeps SPL Token's layout, mint
+    /// and owner first, then the amount, then its own extensions.
+    var tokenAmount: UInt64 {
+        get throws(AccountError) {
+            guard data.count >= 72 else { throw .truncated }
+            return data[64..<72].reversed().reduce(0) { $0 << 8 | UInt64($1) }
+        }
+    }
 }
 
 extension AccountInfo: Decodable {

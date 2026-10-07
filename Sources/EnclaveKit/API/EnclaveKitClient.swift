@@ -104,6 +104,20 @@ public struct EnclaveKitClient: Sendable {
         return guardedWallet(id, key: key)
     }
 
+    /// Stops guarding the wallet `id`: `guardedWallets()` leaves it out. The
+    /// wallet still names this device until its owner changes its
+    /// guardians.
+    public func forgetWallet(_ id: Wallet.ID) throws {
+        let ids = try guardedIDs().filter { $0 != id }
+        // An update with no bytes leaves the item as it was, on the Mac at
+        // least: forgetting the last one deletes the list.
+        if ids.isEmpty {
+            try Keychain.delete(guardedAccount)
+        } else {
+            try Keychain.set(Data(ids.flatMap(\.bytes)), account: guardedAccount)
+        }
+    }
+
     /// 32 bytes per wallet, one after the other.
     private func guardedIDs() throws -> [Wallet.ID] {
         let bytes = try Keychain.read(guardedAccount).map(Array.init) ?? []
@@ -116,7 +130,7 @@ public struct EnclaveKitClient: Sendable {
 
     /// `id` `nil`: the wallet `key` made.
     private func wallet(of key: SecureEnclaveKey, id: Wallet.ID?) -> Wallet {
-        Wallet(signer: key, walletId: id?.bytes, kora: kora, rpc: rpc, cluster: config.cluster)
+        Wallet(signer: key, walletId: id?.bytes, kora: kora, rpc: rpc, cluster: config.cluster, deleteKey: { try deleteDeviceKey() })
     }
 
     private func guardedWallet(_ id: Wallet.ID, key: SecureEnclaveKey) -> GuardedWallet {

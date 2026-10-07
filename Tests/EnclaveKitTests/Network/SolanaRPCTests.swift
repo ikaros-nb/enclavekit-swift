@@ -60,6 +60,21 @@ struct SolanaRPCTests {
         #expect(try await rpc.minimumBalanceForRentExemption(space: 229) == 2_484_720)
     }
 
+    /// One call per token program, SPL Token first.
+    @Test func tokenAmountsCoverBothPrograms() async throws {
+        let rpc = SolanaRPC(transport: stub { [address] method, params in
+            let params = params as? [Any]
+            #expect(method == "getTokenAccountsByOwner")
+            #expect(params?.first as? String == address.base58)
+            #expect(params?.last as? [String: String] == ["commitment": "confirmed", "encoding": "base64"])
+            let programId = try #require((params?[1] as? [String: String])?["programId"])
+            let index = try #require(SolanaRPC.tokenPrograms.map(\.base58).firstIndex(of: programId))
+            let account = tokenAccountJSON(owner: address, amount: UInt64(index) * 5, program: SolanaRPC.tokenPrograms[index])
+            return #"{"context":{"slot":1},"value":[\#(account)]}"#
+        })
+        #expect(try await rpc.tokenAmounts(owner: address) == [0, 5])
+    }
+
     @Test func serverErrorThrows() async {
         let rpc = SolanaRPC(transport: stub(
             expecting: #"{"jsonrpc":"2.0","id":1,"method":"getMinimumBalanceForRentExemption","params":[229]}"#,

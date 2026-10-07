@@ -34,6 +34,12 @@ public enum EnclaveKitError: Error, Equatable, Sendable {
     /// The vault cannot pay the amount, the fee and keep its own rent:
     /// `available` is the most it can send.
     case insufficientFunds(available: Lamports)
+    /// A token account of the vault still holds a balance: closing the
+    /// wallet deletes the only key that can move it.
+    case tokensLeft
+    /// The wallet never acted and holds less than the fee to send it out:
+    /// nothing to close on-chain. `deleteDeviceKey()` loses no more.
+    case nothingToClose
     /// The user dismissed Face ID, or the system did as the app left the
     /// screen: nothing was signed. The request can be authorized again.
     case cancelled
@@ -51,7 +57,7 @@ public enum EnclaveKitError: Error, Equatable, Sendable {
         switch self {
         case let .failed(receipt, _), let .notConfirmed(receipt): receipt
         case .walletExists, .noWallet, .secureEnclaveUnavailable, .keyReplaced, .notAGuardian, .noRecovery, .recoveryNotOpen,
-             .insufficientFunds, .cancelled, .rejected: nil
+             .insufficientFunds, .tokensLeft, .nothingToClose, .cancelled, .rejected: nil
         }
     }
 }
@@ -75,6 +81,10 @@ extension EnclaveKitError: LocalizedError {
             "This recovery opens at \(opensAt.formatted(date: .abbreviated, time: .standard)): confirm it then."
         case let .insufficientFunds(available):
             "This wallet can send at most \(available): it keeps enough for the fee and its own rent."
+        case .tokensLeft:
+            "This wallet still holds tokens: closing it would lose them for good."
+        case .nothingToClose:
+            "This wallet was never used and holds less than the fee to send it out: there is nothing to close, only the device key to delete."
         case .cancelled:
             "Face ID was cancelled: nothing was signed."
         case let .rejected(reason):

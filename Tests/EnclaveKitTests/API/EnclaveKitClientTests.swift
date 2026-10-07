@@ -58,6 +58,30 @@ final class EnclaveKitClientTests {
         #expect(guarded.allSatisfy { $0.wallet.deviceKey == own.deviceKey })
     }
 
+    /// This device's list only: the wallet still names it on-chain.
+    @Test func forgottenWalletIsNoLongerGuarded() throws {
+        _ = try client.createWallet()
+        let other = Wallet(signer: SoftwareKey(), kora: Kora(url: URL(string: "http://kora.invalid")!)).id
+        _ = try client.guardWallet(Self.someWallet)
+        _ = try client.guardWallet(other)
+        try client.forgetWallet(Self.someWallet)
+        #expect(try client.guardedWallets().map(\.id) == [other])
+        try client.forgetWallet(Self.someWallet)
+        try client.forgetWallet(other)
+        #expect(try client.guardedWallets().isEmpty)
+    }
+
+    /// What a confirmed close runs: `deleteDeviceKey()`, lists included.
+    @Test func closedWalletTakesTheKeyAlong() throws {
+        _ = try client.createWallet()
+        _ = try client.guardWallet(Self.someWallet)
+        try #require(try client.wallet()).deleteKey()
+        #expect(try client.wallet() == nil)
+        // A new key guards nothing.
+        _ = try client.createWallet()
+        #expect(try client.guardedWallets().isEmpty)
+    }
+
     /// Its owner's key, no proposal.
     @Test func recoveryNeedsAProposal() async throws {
         let own = try client.createWallet()

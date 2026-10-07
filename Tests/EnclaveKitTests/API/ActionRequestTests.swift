@@ -39,6 +39,21 @@ struct ActionRequestTests {
         }
     }
 
+    /// No amount: the program reads the balance as it executes.
+    @Test func transferAllNamesNoAmount() async throws {
+        let wallet = wallet(state: accountJSON(data: stateData()), balance: 20_000_000)
+        let request = try await wallet.prepareTransferAll(to: Self.recipient)
+        #expect(request.maxFee == 10_000)
+        #expect(request.summary == "Send the whole balance to 93MB2qRDNVLxbmmPuYpLdAqn3u2x9ZhaVZK5wELHueP8")
+    }
+
+    /// The relayer is paid back first: at the fee or below, nothing is left.
+    @Test func transferAllNeedsMoreThanTheFee() async {
+        await #expect(throws: EnclaveKitError.insufficientFunds(available: 0)) {
+            try await wallet(state: accountJSON(data: stateData()), balance: 10_000).prepareTransferAll(to: Self.recipient)
+        }
+    }
+
     @Test func replacedKeyCannotPrepare() async throws {
         let other = try CompressedP256Key(bytes: [0x02] + [UInt8](repeating: 0xaa, count: 32))
         let wallet = wallet(state: accountJSON(data: stateData(activeKey: other)), balance: 20_000_000)
@@ -115,16 +130,103 @@ struct ActionRequestTests {
         }
     }
 
+    /// The key goes once the cluster confirmed, and only then.
+    @Test func closeDeletesTheKeyOnceConfirmed() async throws {
+        let kora = Self.relayer { params in
+            #expect(Self.transaction(params).firstRange(of: EnclaveKitProgram.discriminator(of: "close_wallet")) != nil)
+        }
+        try await confirmation("key deleted") { deleted in
+            let wallet = wallet(state: accountJSON(data: stateData()), balance: 20_000_000, kora: kora, deleteKey: { deleted() })
+            let request = try await wallet.prepareClose(to: Self.recipient)
+            #expect(request.maxFee == 10_000)
+            #expect(request.summary == "Close this wallet and send everything to 93MB2qRDNVLxbmmPuYpLdAqn3u2x9ZhaVZK5wELHueP8")
+            #expect(try await request.authorize() == Self.sent)
+        }
+    }
+
+    @Test func failedCloseKeepsTheKey() async throws {
+        try await confirmation("key deleted", expectedCount: 0) { deleted in
+            let err = #"{"InstructionError":[1,{"Custom":6003}]}"#
+            let wallet = wallet(state: accountJSON(data: stateData()), err: err, deleteKey: { deleted() })
+            let request = try await wallet.prepareClose(to: Self.recipient)
+            await #expect(throws: EnclaveKitError.failed(Self.sent, reason: "instruction 1 failed with error 6003")) {
+                try await request.authorize()
+            }
+        }
+    }
+
+    /// `close_wallet` caps the refund at the balance: an emptied vault still
+    /// closes, its account's rent pays the relayer.
+    @Test func emptiedVaultStillCloses() async throws {
+        let request = try await wallet(state: accountJSON(data: stateData()), balance: 0).prepareClose(to: Self.recipient)
+        #expect(request.maxFee == 10_000)
+    }
+
+    /// No account to close before the first action: the vault is emptied,
+    /// paying the rent of the account that creates, then the key goes.
+    @Test func unusedWalletIsEmptiedThenForgotten() async throws {
+        let kora = Self.relayer { params in
+            #expect(Self.transaction(params).firstRange(of: EnclaveKitProgram.discriminator(of: "sweep_vault")) != nil)
+        }
+        try await confirmation("key deleted") { deleted in
+            let wallet = wallet(balance: 20_000_000, kora: kora, deleteKey: { deleted() })
+            let request = try await wallet.prepareClose(to: Self.recipient)
+            #expect(request.maxFee == Lamports(1_813_560 + 10_000))
+            #expect(request.summary == "Send the whole balance to 93MB2qRDNVLxbmmPuYpLdAqn3u2x9ZhaVZK5wELHueP8")
+            #expect(try await request.authorize() == Self.sent)
+        }
+    }
+
+    @Test func unusedWalletBelowTheFeeHasNothingToClose() async {
+        await #expect(throws: EnclaveKitError.nothingToClose) {
+            try await wallet(balance: 1_823_560).prepareClose(to: Self.recipient)
+        }
+    }
+
+    /// Only a balance stops it: an empty token account loses nothing.
+    @Test func tokensLeftBlockTheClose() async throws {
+        let state = accountJSON(data: stateData())
+        _ = try await wallet(state: state, tokens: [0]).prepareClose(to: Self.recipient)
+        await #expect(throws: EnclaveKitError.tokensLeft) {
+            try await wallet(state: state, tokens: [0, 1]).prepareClose(to: Self.recipient)
+        }
+    }
+
+    @Test func guardianCannotClose() async {
+        let guardian = SoftwareKey()
+        let wallet = wallet(state: accountJSON(data: stateData(guardian: guardian.publicKey)), signer: guardian)
+        await #expect(throws: EnclaveKitError.keyReplaced) {
+            try await wallet.prepareClose(to: Self.recipient)
+        }
+    }
+
     /// `SoftwareKey.test`'s wallet, seen from `signer`, on a devnet that
     /// answers with `state` at the state's address, `balance` in the vault,
-    /// and `err` for any sent transaction.
-    func wallet(state: String = "null", balance: UInt64 = 0, err: String = "null", kora: Kora? = nil, signer: any Signer = SoftwareKey.test) -> Wallet {
+    /// `tokens` in its SPL Token accounts, and `err` for any sent
+    /// transaction. A confirmed close runs `deleteKey`.
+    func wallet(
+        state: String = "null",
+        balance: UInt64 = 0,
+        tokens: [UInt64] = [],
+        err: String = "null",
+        kora: Kora? = nil,
+        signer: any Signer = SoftwareKey.test,
+        deleteKey: @escaping @Sendable () throws -> Void = {}
+    ) -> Wallet {
+        let vault = EnclaveKitProgram.vaultAddress(walletId: walletId(of: SoftwareKey.test.publicKey))
+        let splToken = SolanaRPC.tokenPrograms[0]
+        let tokenAccounts = tokens.map { tokenAccountJSON(owner: vault, amount: $0, program: splToken) }.joined(separator: ",")
         let rpc = SolanaRPC(transport: stub { method, params in
             switch method {
             case "getAccountInfo":
                 #"{"context":{"slot":1},"value":\#(state)}"#
             case "getBalance":
                 #"{"context":{"slot":1},"value":\#(balance)}"#
+            case "getTokenAccountsByOwner":
+                // All under SPL Token, none under Token-2022.
+                ((params as? [Any])?[1] as? [String: String])?["programId"] == splToken.base58
+                    ? #"{"context":{"slot":1},"value":[\#(tokenAccounts)]}"#
+                    : #"{"context":{"slot":1},"value":[]}"#
             case "getMinimumBalanceForRentExemption":
                 switch (params as? [Int])?.first {
                 case 0: "650240"
@@ -137,7 +239,7 @@ struct ActionRequestTests {
                 nil
             }
         })
-        return Wallet(signer: signer, walletId: walletId(of: SoftwareKey.test.publicKey), kora: kora ?? Self.relayer(), rpc: rpc)
+        return Wallet(signer: signer, walletId: walletId(of: SoftwareKey.test.publicKey), kora: kora ?? Self.relayer(), rpc: rpc, deleteKey: deleteKey)
     }
 
     /// Kora as the tests see it: `check` gets what `signAndSendTransaction`

@@ -90,19 +90,18 @@ struct JSONRPCClient: Sendable {
     }
 }
 
-/// `[first, second]`: Solana RPC takes positional parameters of mixed types.
-struct Positional<First: Encodable, Second: Encodable>: Encodable {
-    let first: First
-    let second: Second
+/// `[first, second, …]`: Solana RPC takes positional parameters of mixed types.
+struct Positional: Encodable {
+    let params: [any Encodable]
 
-    init(_ first: First, _ second: Second) {
-        self.first = first
-        self.second = second
+    init(_ params: any Encodable...) {
+        self.params = params
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.unkeyedContainer()
-        try container.encode(first)
-        try container.encode(second)
+        for param in params {
+            try container.encode(param)
+        }
     }
 }

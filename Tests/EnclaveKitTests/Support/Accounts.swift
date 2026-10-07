@@ -17,6 +17,16 @@ func accountJSON(owner: String = "dG4h3aizVEW1bKjzkGsfk6zqcfa2MVn2DjavPniesSY", 
     """
 }
 
+/// A token account of `owner` holding `amount`, as `getTokenAccountsByOwner`
+/// lists it: mint, owner, amount, then the rest of SPL Token's 165 bytes.
+func tokenAccountJSON(owner: PublicKey, amount: UInt64, program: PublicKey) -> String {
+    var data = [UInt8](repeating: 0xee, count: 32) + owner.bytes
+    data.appendLittleEndian(amount)
+    data += [UInt8](repeating: 0, count: 165 - data.count)
+    let address = try! PublicKey(bytes: [UInt8](repeating: 0xdd, count: 32))
+    return #"{"pubkey":"\#(address)","account":\#(accountJSON(owner: program.base58, data: data))}"#
+}
+
 /// The devnet account of `SmartWalletTests` (nonce 1), moved to the wallet
 /// of `SoftwareKey.test`, with `activeKey`, `attested` and `rotation` as
 /// given, and `guardian` in the first slot.

@@ -23,7 +23,7 @@ final class EnclaveKitClientTests {
 
     deinit {
         try? Keychain.delete(client.account)
-        try? Keychain.delete(client.guardedAccount)
+        try? Keychain.delete(client.forgottenAccount)
         try? Keychain.delete(client.recoveredAccount)
     }
 
@@ -42,46 +42,19 @@ final class EnclaveKitClientTests {
         #expect(try client.wallet()?.address == created.address)
     }
 
-    @Test func guardingNeedsAWallet() throws {
-        #expect(throws: EnclaveKitError.noWallet) { try client.guardWallet(Self.someWallet) }
-        #expect(try client.guardedWallets().isEmpty)
-    }
-
-    /// Each wallet once, in the order the device took them on, signed with
-    /// this device's key.
-    @Test func guardedWalletsAreFoundAgain() throws {
-        let own = try client.createWallet()
-        let other = Wallet(signer: SoftwareKey(), kora: Kora(url: URL(string: "http://kora.invalid")!)).id
-        _ = try client.guardWallet(Self.someWallet)
-        _ = try client.guardWallet(other)
-        _ = try client.guardWallet(Self.someWallet)
-        let guarded = try client.guardedWallets()
-        #expect(guarded.map(\.id) == [Self.someWallet, other])
-        #expect(guarded.allSatisfy { $0.wallet.deviceKey == own.deviceKey })
-    }
-
-    /// This device's list only: the wallet still names it on-chain.
-    @Test func forgottenWalletIsNoLongerGuarded() throws {
-        _ = try client.createWallet()
-        let other = Wallet(signer: SoftwareKey(), kora: Kora(url: URL(string: "http://kora.invalid")!)).id
-        _ = try client.guardWallet(Self.someWallet)
-        _ = try client.guardWallet(other)
-        try client.forgetWallet(Self.someWallet)
-        #expect(try client.guardedWallets().map(\.id) == [other])
-        try client.forgetWallet(Self.someWallet)
-        try client.forgetWallet(other)
-        #expect(try client.guardedWallets().isEmpty)
+    /// No key, nothing can name it: no network.
+    @Test func noKeyFindsNothing() async throws {
+        #expect(try await client.guardedWallets().isEmpty)
+        #expect(try await client.recoverableWallets().isEmpty)
     }
 
     /// What a confirmed close runs: `deleteDeviceKey()`, lists included.
     @Test func closedWalletTakesTheKeyAlong() throws {
         _ = try client.createWallet()
-        _ = try client.guardWallet(Self.someWallet)
+        try client.forgetWallet(Self.someWallet)
         try #require(try client.wallet()).deleteKey()
         #expect(try client.wallet() == nil)
-        // A new key guards nothing.
-        _ = try client.createWallet()
-        #expect(try client.guardedWallets().isEmpty)
+        #expect(try Keychain.read(client.forgottenAccount) == nil)
     }
 
     /// Its owner's key, no proposal.
@@ -93,7 +66,7 @@ final class EnclaveKitClientTests {
         #expect(try client.wallet()?.id == own.id)
     }
 
-    /// A guardian proposed this device's key, then showed the wallet.
+    /// A guardian proposed this device's key.
     @Test func recoveredWalletIsFoundAgain() async throws {
         let own = try client.createWallet()
         let pending = rotation(to: own.deviceKey.key, secondsAgo: 10)
@@ -142,19 +115,30 @@ final class EnclaveKitClientTests {
 
     @Test func deletedKeyTakesItsListsAlong() async throws {
         let own = try client.createWallet()
-        _ = try client.guardWallet(Self.someWallet)
+        try client.forgetWallet(Self.someWallet)
         let pending = rotation(to: own.deviceKey.key, secondsAgo: 10)
         _ = try await online([Self.someWallet: stateData(rotation: pending)]).recoverWallet(Self.someWallet)
 
         try client.deleteDeviceKey()
         #expect(try client.wallet() == nil)
-        #expect(try client.guardedWallets().isEmpty)
+        #expect(try Keychain.read(client.forgottenAccount) == nil)
 
-        // A new key starts with its own wallet, and guards nothing.
+        // A new key starts with its own wallet.
         let next = try client.createWallet()
         #expect(next.deviceKey != own.deviceKey)
         #expect(try client.wallet()?.id == next.id)
-        #expect(try client.guardedWallets().isEmpty)
+    }
+
+    /// The wallet on screen is never offered: this device's own, active on
+    /// its key, then the one it took on.
+    @Test func shownWalletIsNotRecoverable() async throws {
+        let own = try client.createWallet()
+        #expect(try await online([own.id: stateData(of: own.deviceKey.key)]).recoverableWallets().isEmpty)
+
+        let device = online([Self.someWallet: stateData(rotation: rotation(to: own.deviceKey.key, secondsAgo: 10))])
+        #expect(try await device.recoverableWallets().map(\.id) == [Self.someWallet])
+        _ = try await device.recoverWallet(Self.someWallet)
+        #expect(try await device.recoverableWallets().isEmpty)
     }
 
     /// The wallet of key.json.
@@ -167,8 +151,15 @@ final class EnclaveKitClientTests {
             (EnclaveKitProgram.walletAddress(walletId: id.bytes).base58, accountJSON(data: data))
         })
         return EnclaveKitClient(config: client.config, account: client.account, transport: stub { method, params in
-            guard method == "getAccountInfo", let address = (params as? [Any])?.first as? String else { return nil }
-            return #"{"context":{"slot":1},"value":\#(accounts[address] ?? "null")}"#
+            switch method {
+            case "getAccountInfo":
+                guard let address = (params as? [Any])?.first as? String else { return nil }
+                return #"{"context":{"slot":1},"value":\#(accounts[address] ?? "null")}"#
+            case "getProgramAccounts":
+                return programAccountsJSON(Array(states.values), params: params)
+            default:
+                return nil
+            }
         })
     }
 }

@@ -21,8 +21,9 @@ public struct Wallet: Sendable {
         /// it before it opens.
         case active(recovery: Recovery?)
         /// A guardian proposed this device's key: from `recovery.opensAt`,
-        /// `confirmRecovery()` moves the wallet here. Until it does, the
-        /// owner can still cancel.
+        /// `confirmRecovery()` moves the wallet here, and
+        /// `confirmRecoveryWhenOpen()` waits for it. Until then, the owner
+        /// can still cancel.
         case recovering(Recovery)
         /// Another key signs for the wallet: it moved away from this device,
         /// or the recovery toward it was cancelled, or lapsed.
@@ -72,8 +73,9 @@ public struct Wallet: Sendable {
 
     var programId: PublicKey { cluster.programId }
 
-    /// For a guardian to keep, for a new device to recover: show it as a
-    /// QR code.
+    /// The same through every rotation: what `recoverWallet(_:)` takes on
+    /// and `forgetWallet(_:)` hides. No device needs to show it: each finds
+    /// the wallets that name its key.
     public var id: ID { ID(bytes: walletId) }
 
     /// This device's key, for another wallet to name as guardian: show it as
@@ -96,7 +98,12 @@ public struct Wallet: Sendable {
     }
 
     public func status() async throws -> Status {
-        guard let state = try await state() else { return .notOnChainYet }
+        status(in: try await state())
+    }
+
+    /// What `state`, already read, says of this device's key.
+    func status(in state: SmartWallet?) -> Status {
+        guard let state else { return .notOnChainYet }
         let recovery = recovery(in: state)
         if state.activeKey == signer.publicKey { return .active(recovery: recovery) }
         if let recovery, recovery.newKey == deviceKey { return .recovering(recovery) }
@@ -149,8 +156,9 @@ public struct Wallet: Sendable {
     /// Moves the wallet to `newKey`, the key another device shows, as soon
     /// as the transaction confirms: this device still holds the wallet's key,
     /// so no delay, no guardian. From then on this device's status is
-    /// `keyReplaced`; the other device takes the wallet on with
-    /// `recoverWallet(id)`. Ends any recovery in progress. Throws
+    /// `keyReplaced`; the other device finds the wallet with
+    /// `recoverableWallets()` and takes it on with `recoverWallet(_:)`.
+    /// Ends any recovery in progress. Throws
     /// `notOnChainYet` before the first action, `keyInUse` if the wallet
     /// already names `newKey`: this device's own, or a guardian's.
     public func prepareMove(to newKey: DeviceKey) async throws -> ActionRequest {
@@ -261,6 +269,23 @@ public struct Wallet: Sendable {
     /// none is pending toward this device.
     public func confirmRecovery() async throws -> Receipt {
         try await confirmRecovery(retryingEvery: .seconds(1))
+    }
+
+    /// Waits for the recovery toward this device to open, then confirms
+    /// it: started as soon as `status()` says `recovering`, it leaves the
+    /// user nothing to tap. Reads the state again once the delay is over: a
+    /// guardian who proposed again pushed `opensAt` back, and the wait goes
+    /// on. Throws `noRecovery` if none is pending toward this device by
+    /// then, the owner cancelled for instance, and `CancellationError` if
+    /// the task is cancelled while it waits: the app starts it again when
+    /// the screen comes back.
+    public func confirmRecoveryWhenOpen() async throws -> Receipt {
+        while true {
+            guard case let .recovering(recovery) = try await status() else { throw EnclaveKitError.noRecovery }
+            let wait = recovery.opensAt.timeIntervalSinceNow
+            if wait <= 0 { return try await confirmRecovery() }
+            try await Task.sleep(for: .seconds(wait))
+        }
     }
 
     /// The program reads the cluster's clock, a second or so behind this

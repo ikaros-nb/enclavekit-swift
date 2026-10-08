@@ -60,6 +60,26 @@ struct SolanaRPCTests {
         #expect(try await rpc.minimumBalanceForRentExemption(space: 229) == 2_484_720)
     }
 
+    /// The size, then the bytes in base58; the whole data comes back in
+    /// base64.
+    @Test func programAccountsSendsBothFilters() async throws {
+        let rpc = SolanaRPC(transport: stub(
+            expecting: """
+            {"jsonrpc":"2.0","id":1,"method":"getProgramAccounts",
+             "params":["dG4h3aizVEW1bKjzkGsfk6zqcfa2MVn2DjavPniesSY",{"commitment":"confirmed","encoding":"base64",
+              "filters":[{"dataSize":325},{"memcmp":{"offset":280,"bytes":"Ldp"}}]}]}
+            """,
+            reply: """
+            {"jsonrpc":"2.0","id":1,"result":[{"pubkey":"hYEjxsHxt6UeiMra3eqTxzuWKTWMbC7Q4qjZLV5NpZK","account":{
+             "data":["AQID","base64"],"executable":false,"lamports":2301240,
+             "owner":"dG4h3aizVEW1bKjzkGsfk6zqcfa2MVn2DjavPniesSY",
+             "rentEpoch":18446744073709551615,"space":3}}]}
+            """
+        ))
+        let accounts = try await rpc.programAccounts(EnclaveKitProgram.id, dataSize: 325, offset: 280, bytes: [1, 2, 3])
+        #expect(accounts.map(\.data) == [[1, 2, 3]])
+    }
+
     /// One call per token program, SPL Token first.
     @Test func tokenAmountsCoverBothPrograms() async throws {
         let rpc = SolanaRPC(transport: stub { [address] method, params in

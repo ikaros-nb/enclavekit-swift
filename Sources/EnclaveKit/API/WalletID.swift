@@ -6,8 +6,8 @@
 //
 
 extension Wallet {
-    /// What a guardian or a new device scans to find a wallet: the hash of
-    /// its first key, which no recovery changes. Its text starts with
+    /// Names a wallet: the hash of its first key, which no recovery
+    /// changes. Its text starts with
     /// `enclavekit:wallet:` so that nobody takes it for the vault's address,
     /// which receives SOL.
     public struct ID: Hashable, Sendable, CustomStringConvertible {

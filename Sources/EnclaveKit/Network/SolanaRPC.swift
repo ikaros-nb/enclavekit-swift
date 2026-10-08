@@ -66,6 +66,18 @@ struct SolanaRPC: Sendable {
         return amounts
     }
 
+    /// The accounts of `program` that are `dataSize` bytes long and hold
+    /// `bytes` at `offset`. The RPC ANDs the filters of one call: each
+    /// alternative is a call of its own.
+    func programAccounts(_ program: PublicKey, dataSize: Int, offset: Int, bytes: [UInt8]) async throws -> [AccountInfo] {
+        let filters = [Filter(dataSize: dataSize), Filter(memcmp: Memcmp(offset: offset, bytes: Base58.encode(bytes)))]
+        let reply: [KeyedAccount] = try await client.call(
+            "getProgramAccounts",
+            Positional(program.base58, Config(encoding: "base64", filters: filters))
+        )
+        return reply.map(\.account)
+    }
+
     /// `{ "pubkey": …, "account": … }`
     private struct KeyedAccount: Decodable {
         let account: AccountInfo
@@ -74,6 +86,19 @@ struct SolanaRPC: Sendable {
     private struct Config: Encodable {
         var commitment = "confirmed"
         var encoding: String?
+        var filters: [Filter]?
+    }
+
+    /// `{ "dataSize": … }` or `{ "memcmp": … }`: one of the two.
+    private struct Filter: Encodable {
+        var dataSize: Int?
+        var memcmp: Memcmp?
+    }
+
+    /// `bytes` in base58, the RPC's default for `memcmp`.
+    private struct Memcmp: Encodable {
+        let offset: Int
+        let bytes: String
     }
 
     /// `{ "context": { "slot": … }, "value": … }`

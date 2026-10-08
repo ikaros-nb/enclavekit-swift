@@ -15,8 +15,8 @@ public struct EnclaveKitClient: Sendable {
     public let config: EnclaveKitConfig
     /// Keychain account of the device key.
     let account: String
-    /// Keychain account of the wallets this device guards.
-    var guardedAccount: String { account + ".guarded" }
+    /// Keychain account of the wallets `forgetWallet(_:)` hid.
+    var forgottenAccount: String { account + ".forgotten" }
     /// Keychain account of the wallet this device recovered, absent while
     /// it has the one its key made.
     var recoveredAccount: String { account + ".recovered" }
@@ -48,16 +48,17 @@ public struct EnclaveKitClient: Sendable {
     /// Makes the device key in the Secure Enclave. Throws `walletExists` if
     /// there is one already: the wallet is that key, it is never replaced.
     /// A device that replaces a lost one starts here too: a guardian
-    /// proposes its `deviceKey`, then `recoverWallet(_:)`.
+    /// proposes its `deviceKey`, `recoverableWallets()` finds the wallet,
+    /// `recoverWallet(_:)` takes it on.
     public func createWallet() throws -> Wallet {
         guard try SecureEnclaveKey.load(account: account) == nil else { throw EnclaveKitError.walletExists }
         return wallet(of: try SecureEnclaveKey.create(account: account), id: nil)
     }
 
-    /// Takes on the wallet `id`, scanned on a guardian's screen once the
-    /// guardian proposed this device's `deviceKey`, or on the old device's
-    /// once it moved the wallet here: this device's own wallet too, moved
-    /// away then back. Kept in the Keychain next to the key: from now on
+    /// Takes on the wallet `id`, one of `recoverableWallets()`: a guardian
+    /// proposed this device's `deviceKey`, or the old device moved the
+    /// wallet here. This device's own wallet too, moved away then back.
+    /// Kept in the Keychain next to the key: from now on
     /// `wallet()` returns it, `recovering` until `confirmRecovery()` after
     /// the delay, `active` at once after a move. Throws `noRecovery` if the
     /// wallet neither moved nor is moving to this device's key,
@@ -80,48 +81,66 @@ public struct EnclaveKitClient: Sendable {
     /// another. The key goes last: a failure halfway never leaves a list a
     /// later key would take for its own.
     public func deleteDeviceKey() throws {
-        try Keychain.delete(guardedAccount)
+        try Keychain.delete(forgottenAccount)
         try Keychain.delete(recoveredAccount)
         try Keychain.delete(account)
     }
 
-    /// The wallets this device guards, in the order it took them on. Kept in
-    /// the Keychain next to the key: a reinstall still finds them.
-    public func guardedWallets() throws -> [GuardedWallet] {
+    /// The wallets waiting for this device's key, read on-chain: the old
+    /// device moved one here, or a guardian proposed this key for one. The
+    /// wallet `wallet()` returns is left out, and so is a lapsed proposal.
+    /// `recoverWallet(_:)` takes one on. Empty before `createWallet()`:
+    /// nothing can name a key that does not exist yet.
+    public func recoverableWallets() async throws -> [Wallet] {
         guard let key = try SecureEnclaveKey.load(account: account) else { return [] }
-        return try guardedIDs().map { guardedWallet($0, key: key) }
+        return try await recoverableWallets(of: key, besides: wallet(of: key, id: try recoveredID()).id)
     }
 
-    /// Keeps the wallet `id`, scanned on its owner's device, among those
-    /// this device guards. Its owner names this device with
-    /// `prepareSetGuardians`, before or after. Throws `noWallet` before
-    /// `createWallet()`: the guardian signs with this device's key.
-    public func guardWallet(_ id: Wallet.ID) throws -> GuardedWallet {
-        guard let key = try SecureEnclaveKey.load(account: account) else { throw EnclaveKitError.noWallet }
-        let ids = try guardedIDs()
-        if !ids.contains(id) {
-            try Keychain.set(Data((ids + [id]).flatMap(\.bytes)), account: guardedAccount)
+    /// The same for any key, `shown` left out.
+    func recoverableWallets(of key: any Signer, besides shown: Wallet.ID) async throws -> [Wallet] {
+        let states = try await states(matchingAny: [.activeKey(key.publicKey), .proposal(to: key.publicKey)])
+        return states.compactMap { state in
+            let wallet = wallet(of: key, id: Wallet.ID(bytes: state.walletId))
+            guard wallet.id != shown else { return nil }
+            switch wallet.status(in: state) {
+            case .active, .recovering: return wallet
+            case .notOnChainYet, .keyReplaced: return nil
+            }
         }
-        return guardedWallet(id, key: key)
     }
 
-    /// Stops guarding the wallet `id`: `guardedWallets()` leaves it out. The
-    /// wallet still names this device until its owner changes its
-    /// guardians.
+    /// The wallets that name this device among their guardians, read
+    /// on-chain: an owner adds this device's key, and the wallet shows here
+    /// with nothing more to do; removed, it goes. Those `forgetWallet(_:)`
+    /// hid stay out. Empty before `createWallet()`.
+    public func guardedWallets() async throws -> [GuardedWallet] {
+        guard let key = try SecureEnclaveKey.load(account: account) else { return [] }
+        return try await guardedWallets(of: key)
+    }
+
+    /// The same for any key.
+    func guardedWallets(of key: any Signer) async throws -> [GuardedWallet] {
+        let forgotten = try forgottenIDs()
+        let filters = (0..<maxGuardians).map { SmartWallet.Filter.guardian(key.publicKey, slot: $0) }
+        return try await states(matchingAny: filters)
+            .map { Wallet.ID(bytes: $0.walletId) }
+            .filter { !forgotten.contains($0) }
+            .map { GuardedWallet(wallet: wallet(of: key, id: $0)) }
+    }
+
+    /// Hides the wallet `id` from `guardedWallets()` for good: anyone can
+    /// name this device's key, once shown, as their guardian. The wallet
+    /// still names it until its owner changes its guardians, and named
+    /// again later, it stays hidden. Kept in the Keychain next to the key.
     public func forgetWallet(_ id: Wallet.ID) throws {
-        let ids = try guardedIDs().filter { $0 != id }
-        // An update with no bytes leaves the item as it was, on the Mac at
-        // least: forgetting the last one deletes the list.
-        if ids.isEmpty {
-            try Keychain.delete(guardedAccount)
-        } else {
-            try Keychain.set(Data(ids.flatMap(\.bytes)), account: guardedAccount)
-        }
+        let ids = try forgottenIDs()
+        guard !ids.contains(id) else { return }
+        try Keychain.set(Data((ids + [id]).flatMap(\.bytes)), account: forgottenAccount)
     }
 
     /// 32 bytes per wallet, one after the other.
-    private func guardedIDs() throws -> [Wallet.ID] {
-        let bytes = try Keychain.read(guardedAccount).map(Array.init) ?? []
+    private func forgottenIDs() throws -> [Wallet.ID] {
+        let bytes = try Keychain.read(forgottenAccount).map(Array.init) ?? []
         return stride(from: 0, to: bytes.count - 31, by: 32).map { Wallet.ID(bytes: Array(bytes[$0..<$0 + 32])) }
     }
 
@@ -129,12 +148,27 @@ public struct EnclaveKitClient: Sendable {
         try Keychain.read(recoveredAccount).map { Wallet.ID(bytes: Array($0)) }
     }
 
-    /// `id` `nil`: the wallet `key` made.
-    private func wallet(of key: SecureEnclaveKey, id: Wallet.ID?) -> Wallet {
-        Wallet(signer: key, walletId: id?.bytes, kora: kora, rpc: rpc, cluster: config.cluster, deleteKey: { try deleteDeviceKey() })
+    /// The wallet states that match one of `filters` at least, each once,
+    /// in the order of their IDs: a list that keeps its order from one read
+    /// to the next. One query per filter, all at once.
+    private func states(matchingAny filters: [SmartWallet.Filter]) async throws -> [SmartWallet] {
+        let accounts = try await withThrowingTaskGroup(of: [AccountInfo].self) { group in
+            for filter in filters {
+                group.addTask {
+                    try await rpc.programAccounts(config.cluster.programId, dataSize: SmartWallet.space, offset: filter.offset, bytes: filter.bytes)
+                }
+            }
+            return try await group.reduce(into: []) { $0 += $1 }
+        }
+        // The program lets a wallet name a key in two slots.
+        let states = try accounts.map { try SmartWallet(data: $0.data) }
+        return Dictionary(states.map { ($0.walletId, $0) }, uniquingKeysWith: { first, _ in first })
+            .values
+            .sorted { $0.walletId.lexicographicallyPrecedes($1.walletId) }
     }
 
-    private func guardedWallet(_ id: Wallet.ID, key: SecureEnclaveKey) -> GuardedWallet {
-        GuardedWallet(wallet: wallet(of: key, id: id))
+    /// `id` `nil`: the wallet `key` made.
+    private func wallet(of key: any Signer, id: Wallet.ID?) -> Wallet {
+        Wallet(signer: key, walletId: id?.bytes, kora: kora, rpc: rpc, cluster: config.cluster, deleteKey: { try deleteDeviceKey() })
     }
 }

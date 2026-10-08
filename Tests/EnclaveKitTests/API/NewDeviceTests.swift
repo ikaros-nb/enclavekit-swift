@@ -71,6 +71,32 @@ struct NewDeviceTests {
         }
     }
 
+    /// Proposed 59 seconds ago, by whole seconds: open within a second. The
+    /// confirmation waits for `opensAt`, then goes out on its own.
+    @Test func confirmWhenOpenWaitsForTheDelay() async throws {
+        let pending = rotation(to: Self.device.publicKey, secondsAgo: 59)
+        let opensAt = Recovery(pending, cluster: .devnet).opensAt
+        let kora = ActionRequestTests.relayer { params in
+            #expect(Date.now >= opensAt)
+            #expect(ActionRequestTests.transaction(params).firstRange(of: EnclaveKitProgram.discriminator(of: "confirm_rotation")) != nil)
+        }
+        #expect(try await wallet(holding: pending, kora: kora).confirmRecoveryWhenOpen() == ActionRequestTests.sent)
+    }
+
+    /// The owner cancels while the device waits: nothing reaches Kora.
+    @Test func confirmWhenOpenStopsAtACancel() async throws {
+        let pending = rotation(to: Self.device.publicKey, secondsAgo: 59)
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let rpc = SolanaRPC(transport: stub { method, _ in
+            guard method == "getAccountInfo" else { return nil }
+            let cancelled = reads.withLock { $0 += 1; return $0 } > 1
+            return #"{"context":{"slot":1},"value":\#(accountJSON(data: stateData(rotation: cancelled ? nil : pending)))}"#
+        })
+        let silent = Kora(url: URL(string: "http://kora.invalid")!, transport: stub { _, _ in nil })
+        let wallet = Wallet(signer: Self.device, walletId: walletId(of: SoftwareKey.test.publicKey), kora: silent, rpc: rpc)
+        await #expect(throws: EnclaveKitError.noRecovery) { try await wallet.confirmRecoveryWhenOpen() }
+    }
+
     /// `SoftwareKey.test`'s wallet, seen from `device`, with `pending` in
     /// its state.
     func wallet(holding pending: SmartWallet.PendingRotation?, kora: Kora? = nil) -> Wallet {

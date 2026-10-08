@@ -20,7 +20,8 @@ public enum EnclaveKitError: Error, Equatable, Sendable {
     /// No Secure Enclave key behind Face ID here: the iOS Simulator has one,
     /// but refuses its access control.
     case secureEnclaveUnavailable
-    /// The wallet rotated to another key: this device can no longer sign.
+    /// The wallet rotated to another key, or was closed after it left this
+    /// device: this device can no longer sign.
     case keyReplaced
     /// The guarded wallet does not name this device: its owner adds it with
     /// `prepareSetGuardians`.
@@ -83,7 +84,7 @@ extension EnclaveKitError: LocalizedError {
         case .secureEnclaveUnavailable:
             "This device cannot keep a key behind Face ID. The iOS Simulator cannot: run on an iPhone."
         case .keyReplaced:
-            "This wallet moved to another key: this device can no longer sign for it."
+            "This wallet moved to another key, or was closed since: this device can no longer sign for it."
         case .notAGuardian:
             "This wallet does not name this device as guardian: its owner has to add it first."
         case .noRecovery:

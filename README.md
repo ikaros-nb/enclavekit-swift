@@ -136,7 +136,7 @@ try await moved.status()                    // .active(recovery: nil)
 - `prepareMove(to:)` throws `notOnChainYet` before the wallet's first action: it has no key on-chain to move. It throws `keyInUse` for this device's own key or a guardian's: remove that guardian first.
 - The new iPhone must not already sign for a wallet: `recoverWallet` throws `walletExists`. A wallet of its own that never acted is fine.
 - A wallet comes back the same way. To the wallet `wallet()` returns, the device that made it for instance, it needs nothing more: `recoverableWallets()` leaves it out, and its status turns back to `.active`.
-- `wallet()` returns the last wallet the device took on, even once that wallet moved away again: `.keyReplaced`. The device key still guards, and can take on another wallet.
+- `wallet()` returns the last wallet the device took on, even once that wallet moved away again, or was closed: `.keyReplaced`. Only the key that made a wallet can create its account again, so this device never shows a closed wallet as `.notOnChainYet`. The device key still guards, and can take on another wallet.
 
 ## Starting over
 
@@ -156,7 +156,7 @@ try await moved.status()                    // .active(recovery: nil)
 | `insufficientFunds(available:)` | The vault cannot pay the amount, the fee and keep its rent. |
 | `rejected(reason:)` | Kora refused the transaction, its simulation failed for instance: nothing was sent. |
 | `failed(_:reason:)`, `notConfirmed(_:)` | The transaction reached the network: `receipt` gives its explorer page. |
-| `keyReplaced` | The wallet moved to another key: this device no longer signs for it. |
+| `keyReplaced` | The wallet moved to another key, or was closed after it left this device: this device no longer signs for it. |
 | `notAGuardian` | The guarded wallet does not name this device. |
 | `noRecovery` | The wallet neither moved nor is moving to this device's key: the device that signs for it, or a guardian, scans this key first. |
 | `recoveryNotOpen(opensAt:)` | The recovery's delay is still running. |

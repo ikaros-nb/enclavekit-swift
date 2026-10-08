@@ -73,9 +73,16 @@ struct WalletTests {
         #expect(try await wallet.status() == .keyReplaced)
     }
 
-    /// The wallet of `SoftwareKey.test`, whose RPC answers the one
-    /// `getAccountInfo` of its state with `value`.
-    func wallet(stateAccount value: String) -> Wallet {
+    /// Taken on by another device, which lost it again, then closed: no
+    /// account, as before the first action, but that device's key could
+    /// never create it.
+    @Test func closedWalletOfAnotherKeyIsReplaced() async throws {
+        #expect(try await wallet(stateAccount: "null", seenBy: SoftwareKey()).status() == .keyReplaced)
+    }
+
+    /// The wallet of `SoftwareKey.test`, seen from `device`, whose RPC
+    /// answers the one `getAccountInfo` of its state with `value`.
+    func wallet(stateAccount value: String, seenBy device: any Signer = SoftwareKey.test) -> Wallet {
         let rpc = SolanaRPC(transport: stub(
             expecting: """
             {"jsonrpc":"2.0","id":1,"method":"getAccountInfo",
@@ -83,6 +90,6 @@ struct WalletTests {
             """,
             reply: #"{"jsonrpc":"2.0","id":1,"result":{"context":{"slot":1},"value":\#(value)}}"#
         ))
-        return Wallet(signer: SoftwareKey.test, kora: kora, rpc: rpc)
+        return Wallet(signer: device, walletId: walletId(of: SoftwareKey.test.publicKey), kora: kora, rpc: rpc)
     }
 }

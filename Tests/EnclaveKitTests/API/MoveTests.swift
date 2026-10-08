@@ -46,6 +46,14 @@ struct MoveTests {
         }
     }
 
+    /// Taken on by this device, then closed: no key on-chain, and none this
+    /// device could put there.
+    @Test func closedWalletOfAnotherKeyCannotMove() async {
+        await #expect(throws: EnclaveKitError.keyReplaced) {
+            try await ActionRequestTests().wallet(balance: 20_000_000, signer: SoftwareKey()).prepareMove(to: DeviceKey(newDeviceKey.publicKey))
+        }
+    }
+
     /// A guardian's key would end up guarding itself; this device's own
     /// would move nothing.
     @Test func keyTheWalletNamesIsRefused() async throws {

@@ -14,7 +14,9 @@ import Foundation
 public struct Wallet: Sendable {
     public enum Status: Equatable, Sendable {
         /// No action yet. The address already receives; the first send
-        /// creates the account, its rent part of that send's fee.
+        /// creates the account, its rent part of that send's fee. Only
+        /// for the wallet this device's key made: no other key may create
+        /// it.
         case notOnChainYet
         /// This device signs for the wallet. `recovery`: a guardian proposed
         /// to move the wallet to another key. Not this user's doing? Cancel
@@ -26,7 +28,10 @@ public struct Wallet: Sendable {
         /// can still cancel.
         case recovering(Recovery)
         /// Another key signs for the wallet: it moved away from this device,
-        /// or the recovery toward it was cancelled, or lapsed.
+        /// or the recovery toward it was cancelled, or lapsed. Also a
+        /// wallet this device took on, closed since: only the key that
+        /// made it could create it again, and SOL sent to its address
+        /// stays there.
         case keyReplaced
     }
 
@@ -73,6 +78,10 @@ public struct Wallet: Sendable {
 
     var programId: PublicKey { cluster.programId }
 
+    /// The wallet this device's key made: the only key the program lets
+    /// create its state, on the first action.
+    var madeByThisKey: Bool { walletId == EnclaveKit.walletId(of: signer.publicKey) }
+
     /// The same through every rotation: what `recoverWallet(_:)` takes on
     /// and `forgetWallet(_:)` hides. No device needs to show it: each finds
     /// the wallets that name its key.
@@ -103,7 +112,7 @@ public struct Wallet: Sendable {
 
     /// What `state`, already read, says of this device's key.
     func status(in state: SmartWallet?) -> Status {
-        guard let state else { return .notOnChainYet }
+        guard let state else { return madeByThisKey ? .notOnChainYet : .keyReplaced }
         let recovery = recovery(in: state)
         if state.activeKey == signer.publicKey { return .active(recovery: recovery) }
         if let recovery, recovery.newKey == deviceKey { return .recovering(recovery) }
@@ -162,7 +171,9 @@ public struct Wallet: Sendable {
     /// `notOnChainYet` before the first action, `keyInUse` if the wallet
     /// already names `newKey`: this device's own, or a guardian's.
     public func prepareMove(to newKey: DeviceKey) async throws -> ActionRequest {
-        guard let state = try await state() else { throw EnclaveKitError.notOnChainYet }
+        guard let state = try await state() else {
+            throw madeByThisKey ? EnclaveKitError.notOnChainYet : EnclaveKitError.keyReplaced
+        }
         // A guardian signing the same action only proposes: not a move.
         guard state.activeKey == signer.publicKey else { throw EnclaveKitError.keyReplaced }
         guard newKey.key != state.activeKey, !state.guardians.contains(.p256(newKey.key)) else {
@@ -318,7 +329,7 @@ public struct Wallet: Sendable {
     /// the wallet creates it, and there is no guardian yet.
     private func requireAuthority(over state: SmartWallet?, for action: Action) throws {
         let key = signer.publicKey
-        if state.map({ $0.activeKey == key }) ?? (walletId == EnclaveKit.walletId(of: key)) { return }
+        if state.map({ $0.activeKey == key }) ?? madeByThisKey { return }
         guard case .proposeRotation = action else { throw EnclaveKitError.keyReplaced }
         guard state?.guardians.contains(.p256(key)) == true else { throw EnclaveKitError.notAGuardian }
     }

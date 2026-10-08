@@ -5,68 +5,88 @@
 //  Created by Nicolas Bouème on 30/09/2026.
 //
 
-import Foundation
 import Testing
 @testable import EnclaveKit
 
 struct SmartWalletTests {
-    /// Devnet account zJnfu9j39T4tB2VYGLrDNbdujq89YtvkgJk1FwJ135u, created by
-    /// one run of the `kora_transfer_sol` script.
-    static let devnetAccount = Array(Data(base64Encoded: """
-        QzvcsykKPLHP6LNu6xc3nV+snMt31bx9aURx/E7PZnWsdqiy6c5sCgPiuO5D7rNhJ9bZpKRYsIvT\
-        ESvEJ/MsCp4GztW1QTplqwEAAAAAAAAAAAAAAAD9/QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\
-        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\
-        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\
-        AA==
-        """)!)
+    let vector: StateVector
 
-    @Test func spaceIsTheAllocatedSize() {
-        #expect(Self.devnetAccount.count == SmartWallet.space)
+    init() throws {
+        vector = try loadVector("state")
     }
 
-    /// No vector for accounts: the fields check each other instead. The
-    /// address comes from `walletId`, `walletId` from the key, the bump from
-    /// the derivation.
-    @Test func decodesARealAccount() throws {
-        let wallet = try SmartWallet(data: Self.devnetAccount)
-        let address = try #require(PublicKey.findProgramAddress(seeds: [Seeds.wallet, wallet.walletId], programId: EnclaveKitProgram.id))
-        #expect(address.address.base58 == "zJnfu9j39T4tB2VYGLrDNbdujq89YtvkgJk1FwJ135u")
-        #expect(address.bump == wallet.stateBump)
-        #expect(walletId(of: wallet.activeKey) == wallet.walletId)
-        #expect(wallet.nonce == 1)
-        #expect(!wallet.attested)
-        #expect(wallet.rotation == nil)
-        #expect(wallet.guardians == [.none, .none, .none])
+    /// The size and the offsets the SDK filters on are the Rust crate's. A
+    /// filter puts a tag and the key after it in one run of bytes: each key
+    /// sits right after its tag.
+    @Test func layoutMatchesTheVector() throws {
+        let key = try CompressedP256Key(bytes: vector.state("created").fields.activeKey.bytes)
+        #expect(vector.discriminator.bytes == SmartWallet.discriminator)
+        #expect(vector.size == SmartWallet.space)
+        #expect(SmartWallet.Filter.activeKey(key).offset == vector.offsets.activeKey)
+        #expect((0..<maxGuardians).map { SmartWallet.Filter.guardian(key, slot: $0).offset } == vector.offsets.guardians.map(\.kind))
+        #expect(vector.offsets.guardians.allSatisfy { $0.key == $0.kind + 1 })
+        #expect(SmartWallet.Filter.proposal(to: key).offset == vector.offsets.rotation.pending)
+        #expect(vector.offsets.rotation.newKey == vector.offsets.rotation.pending + 1)
     }
 
-    /// `Some` rotation and guardians with a key shift everything after them.
-    @Test func variantsShiftTheFollowingFields() throws {
-        let key = try CompressedP256Key(bytes: [0x02] + [UInt8](repeating: 0xaa, count: 32))
-        let guardians: [Guardian] = [.p256(key), .none, .webAuthn(key)]
-
-        var data = Array(Self.devnetAccount.prefix(82)) // up to `attested`
-        data += [1] + key.bytes
-        data.appendLittleEndian(Int64(1_790_000_000))
-        data.append(2)
-        data += guardians.flatMap(\.borsh)
-        data += [254, 253]
-        data += [UInt8](repeating: 0, count: SmartWallet.space - data.count)
-
-        let wallet = try SmartWallet(data: data)
-        #expect(wallet.rotation == SmartWallet.PendingRotation(newKey: key, proposedAt: 1_790_000_000, proposedBy: 2))
-        #expect(wallet.guardians == guardians)
-        #expect(wallet.stateBump == 254)
-        #expect(wallet.vaultBump == 253)
+    @Test(arguments: try (loadVector("state") as StateVector).states)
+    func decodesTheVector(_ vector: NamedStateVector) throws {
+        let state = try SmartWallet(data: vector.data.bytes)
+        let fields = vector.fields
+        #expect(state.walletId == fields.walletId.bytes)
+        #expect(state.activeKey.bytes == fields.activeKey.bytes)
+        #expect(state.nonce == fields.nonce)
+        #expect(state.attested == fields.attested)
+        #expect(state.guardians == (try fields.guardians.map { try $0.guardian }))
+        let rotation = fields.rotation
+        let pending = SmartWallet.PendingRotation(
+            newKey: try CompressedP256Key(bytes: rotation.newKey.bytes),
+            proposedAt: rotation.proposedAt,
+            proposedBy: rotation.proposedBy
+        )
+        #expect(state.rotation == (rotation.pending ? pending : nil))
+        #expect(state.stateBump == fields.stateBump)
+        #expect(state.vaultBump == fields.vaultBump)
     }
 
-    @Test func rejectsOtherBytes() {
-        var other = Self.devnetAccount
+    /// Each filter finds the wallet by the key where it looks, and only
+    /// there. The passkey in slot 2 is no P256 guardian, and the zeros of an
+    /// empty slot or of no rotation match no key.
+    @Test func filtersFindTheKeysOfTheVector() throws {
+        let recovering = try vector.state("recovering")
+        let data = recovering.data.bytes
+        let activeKey = try CompressedP256Key(bytes: recovering.fields.activeKey.bytes)
+        let guardian = try CompressedP256Key(bytes: recovering.fields.guardians[1].key.bytes)
+        let passkey = try CompressedP256Key(bytes: recovering.fields.guardians[2].key.bytes)
+        let newKey = try CompressedP256Key(bytes: recovering.fields.rotation.newKey.bytes)
+
+        #expect(SmartWallet.Filter.activeKey(activeKey).matches(data))
+        #expect(SmartWallet.Filter.guardian(guardian, slot: 1).matches(data))
+        #expect(!SmartWallet.Filter.guardian(guardian, slot: 0).matches(data))
+        #expect(!SmartWallet.Filter.guardian(passkey, slot: 2).matches(data))
+        #expect(SmartWallet.Filter.proposal(to: newKey).matches(data))
+        #expect(!SmartWallet.Filter.activeKey(newKey).matches(data))
+        #expect(!SmartWallet.Filter.proposal(to: newKey).matches(try vector.state("created").data.bytes))
+    }
+
+    /// The states the other tests read are the program's bytes: the
+    /// vector's new wallet is `SoftwareKey.test`'s.
+    @Test func testStatesAreWrittenLikeTheProgram() throws {
+        #expect(stateData() == (try vector.state("created").data.bytes))
+    }
+
+    @Test func rejectsOtherBytes() throws {
+        let created = try vector.state("created").data.bytes
+        var other = created
         other[0] ^= 1
         #expect(throws: AccountError.wrongDiscriminator) { try SmartWallet(data: other) }
-        #expect(throws: AccountError.truncated) { try SmartWallet(data: Array(Self.devnetAccount.prefix(80))) }
+        #expect(throws: AccountError.truncated) { try SmartWallet(data: Array(created.dropLast())) }
 
-        var badTag = Self.devnetAccount
-        badTag[82] = 7 // rotation
-        #expect(throws: AccountError.invalidTag(7)) { try SmartWallet(data: badTag) }
+        // `attested`, a guardian's kind, the rotation's `pending`.
+        for offset in [vector.offsets.attested, vector.offsets.guardians[2].kind, vector.offsets.rotation.pending] {
+            var badTag = created
+            badTag[offset] = 3
+            #expect(throws: AccountError.invalidTag(3)) { try SmartWallet(data: badTag) }
+        }
     }
 }

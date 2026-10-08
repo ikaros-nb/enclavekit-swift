@@ -15,7 +15,7 @@ struct ActionRequestTests {
 
     @Test func firstTransferPaysTheStateRent() async throws {
         let request = try await wallet(balance: 20_000_000).prepareTransfer(10_000_000, to: Self.recipient)
-        #expect(request.maxFee == Lamports(1_813_560 + 10_000))
+        #expect(request.maxFee == Lamports(2_301_240 + 10_000))
         #expect(request.summary == "Send 0.01 SOL to 93MB2qRDNVLxbmmPuYpLdAqn3u2x9ZhaVZK5wELHueP8")
     }
 
@@ -24,12 +24,12 @@ struct ActionRequestTests {
         #expect(try await wallet.prepareTransfer(10_000_000, to: Self.recipient).maxFee == 10_000)
     }
 
-    /// 20 000 000 − 1 823 560 of fee ceiling − 650 240 of vault rent.
+    /// 20 000 000 − 2 311 240 of fee ceiling − 650 240 of vault rent.
     @Test func vaultKeepsItsRent() async throws {
         let wallet = wallet(balance: 20_000_000)
-        _ = try await wallet.prepareTransfer(17_526_200, to: Self.recipient)
-        await #expect(throws: EnclaveKitError.insufficientFunds(available: 17_526_200)) {
-            try await wallet.prepareTransfer(17_526_201, to: Self.recipient)
+        _ = try await wallet.prepareTransfer(17_038_520, to: Self.recipient)
+        await #expect(throws: EnclaveKitError.insufficientFunds(available: 17_038_520)) {
+            try await wallet.prepareTransfer(17_038_521, to: Self.recipient)
         }
     }
 
@@ -112,10 +112,10 @@ struct ActionRequestTests {
     /// enclave signs the approved ceiling, the relayer gets back only the fee.
     @Test func authorizeSignsTheApprovedCeiling() async throws {
         let kora = Self.relayer { params in
-            Self.checkTransferSol(params, nonce: 1, maxRelayerFee: 1_823_560, relayerFee: 10_000)
+            Self.checkTransferSol(params, nonce: 1, maxRelayerFee: 2_311_240, relayerFee: 10_000)
         }
         let wallet = wallet(state: accountJSON(data: stateData()), kora: kora)
-        let request = ActionRequest(maxFee: 1_823_560, action: .transferSol(to: Self.recipient, lamports: 1_000_000), wallet: wallet)
+        let request = ActionRequest(maxFee: 2_311_240, action: .transferSol(to: Self.recipient, lamports: 1_000_000), wallet: wallet)
         #expect(try await request.authorize() == Self.sent)
     }
 
@@ -179,7 +179,7 @@ struct ActionRequestTests {
         try await confirmation("key deleted") { deleted in
             let wallet = wallet(balance: 20_000_000, kora: kora, deleteKey: { deleted() })
             let request = try await wallet.prepareClose(to: Self.recipient)
-            #expect(request.maxFee == Lamports(1_813_560 + 10_000))
+            #expect(request.maxFee == Lamports(2_301_240 + 10_000))
             #expect(request.summary == "Send the whole balance to 93MB2qRDNVLxbmmPuYpLdAqn3u2x9ZhaVZK5wELHueP8")
             #expect(try await request.authorize() == Self.sent)
         }
@@ -187,7 +187,7 @@ struct ActionRequestTests {
 
     @Test func unusedWalletBelowTheFeeHasNothingToClose() async {
         await #expect(throws: EnclaveKitError.nothingToClose) {
-            try await wallet(balance: 1_823_560).prepareClose(to: Self.recipient)
+            try await wallet(balance: 2_311_240).prepareClose(to: Self.recipient)
         }
     }
 
@@ -238,7 +238,7 @@ struct ActionRequestTests {
             case "getMinimumBalanceForRentExemption":
                 switch (params as? [Int])?.first {
                 case 0: "650240"
-                case SmartWallet.space: "1813560"
+                case SmartWallet.space: "2301240"
                 default: nil
                 }
             case "getSignatureStatuses":

@@ -12,7 +12,7 @@ import Foundation
 /// told otherwise.
 func accountJSON(owner: String = "dG4h3aizVEW1bKjzkGsfk6zqcfa2MVn2DjavPniesSY", data: [UInt8]) -> String {
     """
-    {"data":["\(Data(data).base64EncodedString())","base64"],"executable":false,"lamports":1813560,
+    {"data":["\(Data(data).base64EncodedString())","base64"],"executable":false,"lamports":2301240,
      "owner":"\(owner)","rentEpoch":18446744073709551615,"space":\(data.count)}
     """
 }
@@ -27,28 +27,62 @@ func tokenAccountJSON(owner: PublicKey, amount: UInt64, program: PublicKey) -> S
     return #"{"pubkey":"\#(address)","account":\#(accountJSON(owner: program.base58, data: data))}"#
 }
 
-/// The devnet account of `SmartWalletTests` (nonce 1, not attested), moved
-/// to the wallet of `SoftwareKey.test`, with `activeKey` and `rotation` as
-/// given, and `guardian` in the first slot.
+/// The state of the wallet `owner`'s key made, nonce 1, not attested, as
+/// the program writes it field after field: `activeKey`, `owner` unless
+/// given; `guardian` in each slot of `slots`; `rotation` pending. Built
+/// without the SDK's offsets, which the tests check against it.
 func stateData(
-    activeKey: CompressedP256Key = SoftwareKey.test.publicKey,
+    of owner: CompressedP256Key = SoftwareKey.test.publicKey,
+    activeKey: CompressedP256Key? = nil,
     guardian: CompressedP256Key? = nil,
+    inSlots slots: [Int] = [0],
     rotation: SmartWallet.PendingRotation? = nil
 ) -> [UInt8] {
-    let devnet = SmartWalletTests.devnetAccount
-    var data = Array(devnet.prefix(82)) // up to `attested`
-    data.replaceSubrange(8..<73, with: walletId(of: SoftwareKey.test.publicKey) + activeKey.bytes)
-    if let rotation {
-        data += [1] + rotation.newKey.bytes
-        data.appendLittleEndian(rotation.proposedAt)
-        data.append(rotation.proposedBy)
-    } else {
-        data.append(0)
+    var data = SmartWallet.discriminator + walletId(of: owner) + (activeKey ?? owner).bytes
+    data.appendLittleEndian(UInt64(1))
+    data.append(0)
+    for slot in 0..<maxGuardians {
+        // Kind and key, zeros when empty, then a passkey's rpId hash: zeros.
+        let borsh = (slots.contains(slot) ? guardian.map(Guardian.p256) : nil)?.borsh ?? Guardian.none.borsh
+        data += borsh + [UInt8](repeating: 0, count: 66 - borsh.count)
     }
-    data += [guardian.map(Guardian.p256) ?? .none, .none, .none].flatMap(\.borsh)
-    data += devnet[86..<88] // the bumps, after a `None` rotation and three `None` guardians
-    data += [UInt8](repeating: 0, count: SmartWallet.space - data.count)
+    data.append(rotation == nil ? 0 : 1)
+    data += rotation?.newKey.bytes ?? [UInt8](repeating: 0, count: 33)
+    data.appendLittleEndian(rotation?.proposedAt ?? 0)
+    data.append(rotation?.proposedBy ?? 0)
+    // The bumps, which nothing reads, as in the vector.
+    data += [255, 255]
     return data
+}
+
+extension SmartWallet.Filter {
+    /// What the RPC checks for a `memcmp` filter.
+    func matches(_ data: [UInt8]) -> Bool {
+        data.count >= offset + bytes.count && Array(data[offset..<offset + bytes.count]) == bytes
+    }
+}
+
+/// `getProgramAccounts`' answer on a devnet that holds `states`: those that
+/// pass every filter of `params`, as the RPC applies them. `nil` for a call
+/// without filters, which the SDK never makes.
+func programAccountsJSON(_ states: [[UInt8]], params: Any?) -> String? {
+    guard let config = (params as? [Any])?.last as? [String: Any],
+          let filters = config["filters"] as? [[String: Any]]
+    else { return nil }
+    let found = states.filter { data in
+        filters.allSatisfy { filter in
+            if let size = filter["dataSize"] as? Int { return data.count == size }
+            guard let memcmp = filter["memcmp"] as? [String: Any],
+                  let offset = memcmp["offset"] as? Int,
+                  let bytes = (memcmp["bytes"] as? String).flatMap(Base58.decode)
+            else { return false }
+            return SmartWallet.Filter(offset: offset, bytes: bytes).matches(data)
+        }
+    }
+    let accounts = found.map { data in
+        #"{"pubkey":"\#(EnclaveKitProgram.walletAddress(walletId: Array(data[8..<40])))","account":\#(accountJSON(data: data))}"#
+    }
+    return "[\(accounts.joined(separator: ","))]"
 }
 
 /// What the wallet holds `seconds` after a guardian, in the first slot,

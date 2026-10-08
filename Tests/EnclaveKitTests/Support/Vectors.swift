@@ -143,6 +143,90 @@ struct GuardianVector: Decodable {
     }
 }
 
+/// The state account as Anchor encodes it, with the offset of every field.
+struct StateVector: Decodable {
+    let discriminator: Hex
+    let size: Int
+    let offsets: StateOffsets
+    /// What `rp_id_hash` hashes in the passkey's slot.
+    let rpId: String
+    let states: [NamedStateVector]
+
+    func state(_ name: String) throws -> NamedStateVector {
+        try #require(states.first { $0.name == name })
+    }
+}
+
+struct StateOffsets: Decodable {
+    let walletId: Int
+    let activeKey: Int
+    let nonce: Int
+    let attested: Int
+    let guardians: [GuardianSlotOffsets]
+    let rotation: RotationOffsets
+    let stateBump: Int
+    let vaultBump: Int
+}
+
+struct GuardianSlotOffsets: Decodable {
+    let kind: Int
+    let key: Int
+    let rpIdHash: Int
+}
+
+struct RotationOffsets: Decodable {
+    let pending: Int
+    let newKey: Int
+    let proposedAt: Int
+    let proposedBy: Int
+}
+
+struct NamedStateVector: Decodable, CustomTestStringConvertible {
+    let name: String
+    let fields: StateFields
+    let data: Hex
+
+    var testDescription: String { name }
+}
+
+struct StateFields: Decodable {
+    let walletId: Hex
+    let activeKey: Hex
+    let nonce: UInt64
+    let attested: Bool
+    let guardians: [GuardianSlotVector]
+    let rotation: RotationVector
+    let stateBump: UInt8
+    let vaultBump: UInt8
+}
+
+/// `kind` is `"None"`, `"P256"` or `"WebAuthn"`; `key` and `rpIdHash` are
+/// zeros when unused.
+struct GuardianSlotVector: Decodable {
+    let kind: String
+    let key: Hex
+    let rpIdHash: Hex
+
+    var guardian: Guardian {
+        get throws {
+            switch kind {
+            case "None": .none
+            case "P256": .p256(try CompressedP256Key(bytes: key.bytes))
+            case "WebAuthn": .webAuthn(try CompressedP256Key(bytes: key.bytes))
+            default: throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "unknown kind \(kind)"))
+            }
+        }
+    }
+}
+
+/// All zeros but `pending` when no rotation is pending.
+struct RotationVector: Decodable {
+    let pending: Bool
+    let newKey: Hex
+    let proposedAt: Int64
+    let proposedBy: UInt8
+}
+
 struct HighSVector: Decodable {
     let message: Hex
     let highS: Hex
